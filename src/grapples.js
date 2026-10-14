@@ -8,9 +8,11 @@ const alive = f => f && !f.dead && f.hp > 0;
 // falling-body contacts / landing injury. State uses IDs, never cyclic links.
 export class Grapples {
   tryGrab(game, holder) {
-    if (holder.weapon || !holder.grounded || holder.z > 8 || holder.guard || holder.action) return false;
+    if (!alive(holder) || holder.weapon || !holder.grounded || holder.z > 8 || holder.guard || holder.action ||
+        holder.stun > 0 || holder.frozen > 0 || holder.knockdown > 0 || holder.dashTime > 0 ||
+        holder.grabTarget != null || holder.grabbedBy != null) return false;
     const target = game.targets(holder).filter(f => alive(f) && f.grabbedBy == null &&
-      f.grabTarget == null && f.grounded && f.z <= 8 && f.knockdown <= 0 && f.frozen <= 0 &&
+      f.grabTarget == null && f.grounded && f.z <= 8 && f.knockdown <= 0 && f.frozen <= 0 && f.invulnerable <= 0 &&
       f.stun > 0 && f.hitType === 'dizzy' && (f.x - holder.x) * holder.facing > 0 &&
       Math.abs(f.x - holder.x) <= 84 && Math.abs(f.depth - holder.depth) < 28)
       .sort((a, b) => Math.abs(a.x - holder.x) - Math.abs(b.x - holder.x))[0];
@@ -26,7 +28,8 @@ export class Grapples {
         parryTimer: 0, armor: false, running: false, hitLag: 0, hitReact: 0 });
     }
     this.sync(holder, target);
-    game.floater(target.x, target.y - target.h - 14, 'GRABBED · U THROW', '#9a7935');
+    game.floater(target.x, target.y - target.h - 14,
+      holder.team === 'player' ? 'J PUNCH · U THROW' : 'GRABBED!', '#9a7935');
     return true;
   }
 
@@ -46,7 +49,7 @@ export class Grapples {
     const target = find(game, holder.grabTarget);
     holder.grabTarget = null;
     holder.grabTime = 0;
-    if (holder.action?.kind === 'bodyThrow') game.endAction(holder);
+    if (['bodyThrow', 'grabPunch'].includes(holder.action?.kind)) game.endAction(holder);
     game.clearCombatInput(holder);
     if (target) {
       target.grabbedBy = null;
@@ -67,12 +70,22 @@ export class Grapples {
     holder.vx = holder.vDepth = holder.vy = 0;
     holder.guard = holder.running = holder.armor = false;
     const queued = holder.buffer;
-    holder.buffer = null; // Powers and mobility entered during a grip are discarded.
+    // Keep a late J/U through recovery, using the ordinary world-clock buffer.
+    // Powers and mobility cannot become an attack after the grip ends.
+    if (queued && (!['attack', 'throw', 'interact'].includes(queued.kind) || queued.command)) holder.buffer = null;
     if (queued?.kind === 'interact') { this.release(game, holder); return; }
     if (!holder.action) {
       const facing = Number(!!input.right) - Number(!!input.left);
       if (facing) holder.facing = facing;
-      if (queued?.kind === 'throw') {
+      if (holder.buffer?.kind === 'attack') {
+        holder.buffer = null;
+        holder.action = { kind: 'grabPunch', t: 0, windup: 6 / 30, activeUntil: 7 / 30,
+          duration: 11 / 30, done: false };
+        holder.attackKind = 'grabPunch';
+        holder.attackTimer = holder.cooldowns.attack = 11 / 30;
+        holder.tell = 6 / 30;
+      } else if (holder.buffer?.kind === 'throw') {
+        holder.buffer = null;
         if (queued.direction) holder.facing = queued.direction;
         holder.action = { kind: 'bodyThrow', t: 0, windup: .2, activeUntil: .25,
           duration: .48, done: false, depthDirection: queued.depthDirection };
@@ -82,6 +95,16 @@ export class Grapples {
       }
     }
     this.sync(holder, target);
+    if (holder.action?.kind === 'grabPunch') {
+      const action = holder.action;
+      action.t += dt;
+      if (!action.done && action.t >= action.windup) {
+        action.done = true;
+        action.connected = game.damage(target, 15, holder.facing, holder, { grabPunch: true, contact: true });
+        if (target.hp <= 0) { this.release(game, holder); return; }
+      }
+      if (action.t >= action.duration) game.endAction(holder);
+    }
     if (holder.action?.kind === 'bodyThrow') {
       const action = holder.action;
       action.t += dt;
@@ -97,7 +120,9 @@ export class Grapples {
           vy: -420, vDepth: action.depthDirection * 140, z: 10, grounded: false,
           stun: 0, knockdown: .7, invulnerable: 0, hitType: 'slam', hitDirection: direction });
         target.y = target.depth - target.z;
-        target.thrown = { sourceId: holder.id, hitIds: [], life: 1.5, direction,
+        target.thrown = { sourceId: holder.id,
+          source: { id: holder.id, team: holder.team, type: holder.type, element: holder.element },
+          hitIds: [], life: 1.5, direction,
           previous: { x: target.x, depth: target.depth, z: target.z } };
         game.floater(target.x, target.y - target.h, 'THROW', '#9a7935');
       }
@@ -114,11 +139,11 @@ export class Grapples {
         this.release(game, holder);
       } else this.sync(holder, target);
     }
-    for (const body of game.state.enemies) {
+    for (const body of fighters(game)) {
       const flight = body.thrown;
       if (!flight) continue;
-      const source = find(game, flight.sourceId);
-      if (!alive(body) || !source) { body.thrown = null; continue; }
+      const source = find(game, flight.sourceId) || flight.source;
+      if (!alive(body)) { body.thrown = null; continue; }
       flight.life -= dt;
       const previous = flight.previous;
       // Sweep along the flight segment so a fast body cannot skip a fighter.

@@ -253,7 +253,7 @@ function updateHud() {
   const shotReadiness = abilityReadiness(p, 'special', element.specialCost);
   const burstReadiness = abilityReadiness(p, 'burst', element.burstCost);
   const hitStreak = s.combo >= 2 && s.comboTimer > 0 && s.status !== 'ready' ? s.combo : 0;
-  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, p.grabTarget, s.arena, s.objective, shotReadiness, burstReadiness, hitStreak].join('|');
+  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, p.grabTarget, p.grabbedBy, s.arena, s.objective, shotReadiness, burstReadiness, hitStreak].join('|');
   if (signature !== hudSignature) {
     hudSignature = signature;
     updateMeter('health', p.hp, p.maxHp);
@@ -276,7 +276,7 @@ function updateHud() {
     $('combo-value').textContent = `${hitStreak} HITS`;
     $('combo-value').setAttribute('aria-label', `${hitStreak} confirmed hits`);
     $('arena-name').textContent = ARENAS[s.arena].name.toUpperCase();
-    $('weapon-label').textContent = p.grabTarget != null ? 'ENEMY HELD · U THROW / E RELEASE' : p.weapon ? `${p.weapon.toUpperCase()} · ${p.weaponHits} HITS · U THROW / E DROP` : 'UNARMED · E GRAB / PICK UP / DRINK';
+    $('weapon-label').textContent = p.grabbedBy != null ? 'GRABBED · WAIT FOR RELEASE' : p.grabTarget != null ? 'ENEMY HELD · J PUNCH / U THROW / E RELEASE' : p.weapon ? `${p.weapon.toUpperCase()} · ${p.weaponHits} HITS · U THROW / E DROP` : 'UNARMED · E GRAB / PICK UP / DRINK';
   }
   const boss = s.enemies.find((enemy) => enemy.type === 'boss' && !enemy.dead && enemy.hp > 0);
   $('boss-hud').hidden = !boss || s.status === 'ready';

@@ -92,11 +92,11 @@ test('a grab input waits for the current jab to finish rather than cancelling re
   assert.ok(action.t >= action.duration - STEP);
 });
 
-test('a grip holds both fighters in place, permits turning, and prevents queued attacks or powers', () => {
+test('a grip holds both fighters in place, permits turning, and discards unrelated powers or movement', () => {
   const { game, player, target } = arena();
   grip(game, player, target);
   const x = player.x, depth = player.depth, energy = player.energy;
-  advance(game, 24, { left: true, up: true, run: true, jump: true, dash: true, attack: true, special: true, burst: true, command: true, guard: true });
+  advance(game, 24, { left: true, up: true, run: true, jump: true, dash: true, special: true, burst: true, command: true, guard: true });
   assert.equal(player.facing, -1, 'direction chooses the throw facing');
   assert.ok(Math.abs(player.x - x) < 1 && Math.abs(player.depth - depth) < 1, 'holding a fighter plants the grabber');
   assert.equal(player.z, 0);

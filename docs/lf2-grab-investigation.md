@@ -45,7 +45,7 @@ The implementation uses the vulnerable opening, linked hold, committed direction
 - A hold lasts at most 1.8 seconds, or 0.9 seconds for a boss. The stationary holder can turn. Interruption or invalid participants end the relationship. These simple deadlines replace LF2's state-dependent grip budget.
 - **U** commits a throw with a 0.2-second windup and a chosen horizontal direction. Up/down supplies modest depth aim. Horizontal speed is 760 world units/second, or 550 for bosses, with a 420-unit upward launch. These values suit Fourfold's arena scale and gravity rather than importing LF2's coordinate system.
 - A flying victim can hit each crowd member once for 22 base damage, then takes 18 base damage on landing or a wall impact. The per-flight target list, exclusion of player self-hits, boss tuning and explicit release are authored rules. An ordinary knockdown does not turn every enemy into another thrown projectile.
-- This pass implements grabbing and throwing; LF2's separate grab-punch action is documented but not added.
+- The initial pass implemented grabbing and throwing. The [held-punch and enemy-grab follow-up](lf2-grab-punch-investigation.md) adds J punches during holds and enemy use of the same grapple mechanics.
 
 REA established these structural mechanics through static evidence. No Windows runtime comparison, live input-latency measurement or frame-perfect emulation is claimed. Gameplay tests and browser validation accompany the implementation.
 

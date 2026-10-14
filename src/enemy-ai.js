@@ -16,9 +16,11 @@ const STYLES = {
 };
 const alive = f => !f.dead && f.hp > 0;
 const disabled = f => f.stun > 0 || f.knockdown > 0 || f.frozen > 0 || f.grabbedBy != null;
-const offensive = f => ['melee', 'special', 'burst', 'throw'].includes(f.action?.kind);
-const pending = f => ['attack', 'special', 'burst', 'throw'].includes(f.buffer?.kind);
-const committed = f => offensive(f) || pending(f);
+const offensive = f => ['melee', 'special', 'burst', 'throw', 'grabPunch', 'bodyThrow'].includes(f.action?.kind);
+const pending = f => ['attack', 'special', 'burst', 'throw', 'interact'].includes(f.buffer?.kind);
+const committed = f => f.grabTarget != null || offensive(f) || pending(f);
+const grabOpening = f => alive(f) && f.grabbedBy == null && f.grabTarget == null &&
+  f.grounded && f.z <= 8 && f.knockdown <= 0 && f.frozen <= 0 && f.stun > 0 && f.hitType === 'dizzy';
 const distance = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.depth - b.depth) * 1.4;
 
 export class EnemyAI {
@@ -47,7 +49,9 @@ export class EnemyAI {
       ai.think = Math.max(0, ai.think - dt);
       // There is one human target. Keep it while valid; do not pursue a corpse.
       ai.targetId = alive(p) ? p.id : null;
-      if ((!alive(p) || p.knockdown > 0) && pending(e)) e.buffer = null;
+      if ((!alive(p) || p.knockdown > 0 || p.grabbedBy != null || p.thrown) &&
+          e.grabTarget !== p.id && pending(e)) e.buffer = null;
+      if (e.grabTarget == null) ai.grip = null;
       if (corner) { ai.side = corner; ai.route = 0; }
       if (ai.permitSince != null && s.time - ai.permitSince > 4 && !committed(e)) {
         ai.lastTurn = s.time;
@@ -63,13 +67,14 @@ export class EnemyAI {
     if (rebalance && !corner) {
       for (const side of [-1, 1]) {
         const members = foes.filter(e => e.ai.side === side);
-        members.filter(e => !e.action).sort((a, b) => distance(b, p) - distance(a, p))
+        members.filter(e => !committed(e)).sort((a, b) => distance(b, p) - distance(a, p))
           .slice(0, Math.max(0, members.length - Math.ceil(foes.length / 2)))
           .forEach(e => { e.ai.side = -side; e.ai.route = 0; });
       }
     }
     const occupied = foes.filter(committed).length;
-    const waiting = foes.filter(e => !committed(e) && !disabled(e) && e.ai.rotationUntil <= s.time)
+    const waiting = foes.filter(e => !committed(e) && !disabled(e) &&
+      (e.ai.rotationUntil <= s.time || (!e.weapon && e.grounded && grabOpening(p))))
       .sort((a, b) => a.ai.lastTurn - b.ai.lastTurn || distance(a, p) - distance(b, p) || a.id - b.id);
     for (const e of waiting.slice(0, Math.max(0, level.attackers - occupied))) e.ai.permit = true;
     for (const e of foes) e.ai.permitSince = e.ai.permit ? (e.ai.permitSince ?? s.time) : null;
@@ -97,10 +102,14 @@ export class EnemyAI {
     const facing = dx >= 0 ? 1 : -1;
     const boss = e.type === 'boss';
     const input = {};
-    const targetUp = alive(p) && p.knockdown <= 0;
+    if (e.grabTarget != null) return this.gripInput(game, e, p, level);
+    const targetUp = alive(p) && p.knockdown <= 0 && p.grabbedBy == null && !p.thrown;
+    // The same opening that permits a player grab gives an unarmed enemy a
+    // reason to stop its combo and step in. Catching still waits out hit immunity.
+    const canApproachGrab = !e.weapon && e.grounded && e.z <= 8 && grabOpening(p);
     if (e.action) {
       // A late follow-up is committed to the existing facing and lane.
-      if (targetUp && e.action.kind === 'melee' && e.action.connected && !e.action.followupQueued &&
+      if (targetUp && !canApproachGrab && e.action.kind === 'melee' && e.action.connected && !e.action.followupQueued &&
           e.comboIndex !== 3 && e.comboCount < (s.settings.difficulty === 'easy' && !boss ? 2 : 4) &&
           e.action.t >= e.action.duration - .1 && absLane < 26 && dx * e.facing > 0 && absX < 140 &&
           Math.abs(p.z - e.z) < 70) {
@@ -109,12 +118,23 @@ export class EnemyAI {
         e.action.followupQueued = true;
         e.aiTimer = .65 * game.difficulty.aggression;
       }
+      // A confirmed dizzy hit can be followed with a small approach during its
+      // recovery. Keep the committed facing and finish the whole action before
+      // catching; this makes a grab reachable from normal jab spacing.
+      if (canApproachGrab && e.action.kind === 'melee' && e.action.connected &&
+          e.action.t >= e.action.activeUntil && dx * e.facing > 0) {
+        input.left = absX > 44 && e.facing < 0;
+        input.right = absX > 44 && e.facing > 0;
+        input.up = lane < -4;
+        input.down = lane > 4;
+      }
       return input;
     }
 
     const rotating = ai.rotationUntil > s.time;
-    const front = ai.permit && !rotating && targetUp;
-    const radius = style.range + (boss ? 18 : 0) + (front ? 0 : 68 + ai.rank * 40);
+    const front = ai.permit && (!rotating || canApproachGrab) && targetUp;
+    const radius = front && canApproachGrab ? 40 :
+      style.range + (boss ? 18 : 0) + (front ? 0 : 68 + ai.rank * 40);
     let goalX = clamp(p.x + ai.side * radius, 50, 1230);
     let goalDepth = clamp(p.depth + (front ? 0 : (ai.rank % 2 ? 1 : -1) * (35 + ai.rank * 12)), 405, 640);
     // Crossing the target's front is done in a separate lane, not through its body.
@@ -139,17 +159,32 @@ export class EnemyAI {
       ai.detourUntil = s.time + .7;
     }
     if (ai.detourUntil > s.time) goalDepth = ai.detour;
-    const projectedX = e.x + e.vx * .1;
-    const projectedDepth = e.depth + e.vDepth * .1;
-    input.left = goalX - projectedX < -10;
-    input.right = goalX - projectedX > 10;
-    input.up = goalDepth - projectedDepth < -7;
-    input.down = goalDepth - projectedDepth > 7;
+    const closingGrab = front && canApproachGrab;
+    const projectedX = e.x + e.vx * (closingGrab ? .04 : .1);
+    const projectedDepth = e.depth + e.vDepth * (closingGrab ? .04 : .1);
+    // Ordinary formation tolerance is too wide for a catch: it settles exactly
+    // at the grab boundary and can consume the remaining dizzy window.
+    const toleranceX = closingGrab ? 3 : 10, toleranceDepth = closingGrab ? 3 : 7;
+    input.left = goalX - projectedX < -toleranceX;
+    input.right = goalX - projectedX > toleranceX;
+    input.up = goalDepth - projectedDepth < -toleranceDepth;
+    input.down = goalDepth - projectedDepth > toleranceDepth;
     input.run = Math.abs(goalX - e.x) > (e.element === 'fire' ? 180 : 300) && Math.abs(goalDepth - e.depth) < 30;
     if (ai.guardUntil > s.time) return { guard: true };
     if (ai.think > 0) return input;
     ai.think = level.reaction * (.8 + game.random() * .4);
-    if (!targetUp || ai.route || rotating) return input;
+    if (!targetUp || ai.route || (rotating && !canApproachGrab)) return input;
+
+    if (front && canApproachGrab && p.invulnerable <= 0 && absX <= 50 && absLane < 15 &&
+        !e.guard && this.occupied(game) < level.attackers) {
+      e.facing = facing;
+      ai.lastTurn = s.time;
+      e.aiTimer = .5;
+      return { interact: true, attackDirection: facing };
+    }
+    // Finish the approach instead of automatically spending the opening on a
+    // fourth strike. A player can still recover or be protected by another hit.
+    if (front && canApproachGrab) return input;
 
     if (p.action?.kind === 'melee' && absX < 125 && absLane < 30 && ai.guardAfter <= s.time &&
         p.action.t > .06 && e.facing === facing && p.facing === -facing && game.random() < level.guardChance + (e.element === 'water' ? .2 : 0)) {
@@ -183,6 +218,27 @@ export class EnemyAI {
 
     if (attack === 'special' || attack === 'throw') { ai.shotAfter = s.time + 3; ai.mustClose = true; }
     return input;
+  }
+
+  gripInput(game, e, target, level) {
+    const { time } = game.state;
+    if (e.grabTarget !== target.id || target.grabbedBy !== e.id || !alive(target)) return {};
+    const ai = e.ai;
+    if (!ai.grip || ai.grip.targetId !== target.id) {
+      ai.grip = { targetId: target.id, nextAt: time + level.reaction + .14,
+        punched: false, throwRequested: false };
+    }
+    if (e.action || e.buffer || time < ai.grip.nextAt) return {};
+    if (!ai.grip.punched) {
+      ai.grip.punched = true;
+      ai.grip.nextAt = time + .6;
+      return { attack: true, attackDirection: e.facing };
+    }
+    if (!ai.grip.throwRequested) {
+      ai.grip.throwRequested = true;
+      return { throw: true, attackDirection: e.facing };
+    }
+    return {};
   }
 
   occupied(game) {

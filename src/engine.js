@@ -80,7 +80,7 @@ export class Game {
     const s = this.state;
     this.grapples.release(this, s.player);
     Object.assign(s.player, { x: 590, y: 555, depth: 555, z: 0, vDepth: 0, vx: 0, vy: 0, grounded: true, jumps: 0, dashUsed: false, dashTime: 0, stun: 0, burn: 0, slow: 0, action: null, guard: false, parryTimer: 0, attackTimer: 0, tell: 0, knockdown: 0, comboIndex: 0, comboTimer: 0 });
-    Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false, hitLag: 0, stagger: 0 });
+    Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false, hitLag: 0, stagger: 0, thrown: null });
     this.clearCombatInput(s.player);
   }
 
@@ -402,7 +402,7 @@ export class Game {
     if (kind === 'jump' || kind === 'dash') {
       if (this.performMobility(f, kind, queued)) f.buffer = null;
     } else if (kind === 'interact') {
-      if (f.team === 'player' && !this.grapples.tryGrab(this, f)) this.pickup(f);
+      if (!this.grapples.tryGrab(this, f) && f.team === 'player') this.pickup(f);
       f.buffer = null;
     } else if (!f.guard) {
       if (queued.direction) f.facing = queued.direction;
@@ -561,7 +561,10 @@ export class Game {
   damage(target, amount, direction, source, options = {}) {
     const s = this.state;
     const landing = options.throwLanding && target.thrown;
-    if (target.dead || (!landing && (target.invulnerable > 0 || target.knockdown > 0)) || target.hp <= 0) return false;
+    const gripHit = options.grabPunch && source?.action?.kind === 'grabPunch' &&
+      source.grabTarget === target.id && target.grabbedBy === source.id;
+    if (options.grabPunch && !gripHit) return false;
+    if (target.dead || (!landing && !gripHit && (target.invulnerable > 0 || target.knockdown > 0)) || target.hp <= 0) return false;
     let knockback = options.knockback ?? 350;
     let heavy = !!(options.heavy || options.knockdown);
     let blocked = false;
@@ -611,9 +614,9 @@ export class Game {
     if (target.element === 'earth') { amount *= 0.86; knockback *= 0.75; }
     if (target.type === 'boss') knockback *= 0.55;
     const armored = target.armor && !heavy && !guardBroken;
-    if (!blocked && !armored && (target.grabTarget != null || target.grabbedBy != null)) this.grapples.release(this, target);
+    if (!gripHit && !blocked && !armored && (target.grabTarget != null || target.grabbedBy != null)) this.grapples.release(this, target);
     if (armored) amount *= .6;
-    if (!blocked && !armored) {
+    if (!gripHit && !blocked && !armored) {
       // Fall pressure is independent of health damage. Bands preserve pressure
       // between quick hits; backing away lets it drain. Elemental finishers keep
       // their launch/freeze behavior, and bosses retain their shorter reactions.
@@ -626,7 +629,12 @@ export class Game {
     }
     target.hp = Math.max(0, target.hp - amount);
     target.invulnerable = target.team === 'player' ? .28 : .075;
-    if (!armored) {
+    if (gripHit) {
+      this.endAction(target);
+      this.clearCombatInput(target);
+      Object.assign(target, { vx: 0, vy: 0, vDepth: 0, hitReact: .22, hitMax: .22,
+        hitDirection: direction, hitStrength: .75, hitType: 'grabHit' });
+    } else if (!armored) {
       this.endAction(target);
       if (!blocked) this.clearCombatInput(target);
       target.vx = direction * knockback;
@@ -830,6 +838,7 @@ export class Game {
     const p = s.player;
     if (p.hp > 0) return;
     this.grapples.release(this, p);
+    p.thrown = null;
     const training = s.settings.mode === 'training';
     if (!training) s.lives--;
     if (s.lives <= 0) {

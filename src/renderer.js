@@ -135,6 +135,9 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
     if (kind === 'runAttack') style = { trail: 'rush', wind: { lean: 3, drop: 6, hand: [8, -44] }, strike: { lean: 17, drop: 3, elbow: [30, -38], hand: [46, -38], rearFoot: [-25, -4], frontFoot: [20, -1], weaponAngle: -0.08 } };
     if (kind === 'aerial') style = { trail: fighter.element === 'air' ? 'rise' : 'kick', contact: 'frontFoot', wind: { lean: -6, frontKnee: [13, -30], frontFoot: [6, -21], hand: [15, -48] }, strike: { lean: -8, frontKnee: [24, -30], frontFoot: [45, -24], rearFoot: [-19, -14], hand: [16, -49] } };
     if (kind === 'throw' || kind === 'bodyThrow') style = { trail: 'throw', wind: { lean: -8, elbow: [-12, -49], hand: [-17, -64], weaponAngle: -1.8 }, strike: { lean: 12, elbow: [25, -49], hand: [43, -51], weaponAngle: -0.2, frontFoot: [23, -1] } };
+    if (kind === 'grabPunch') style = { trail: 'body',
+      wind: { lean: -3, drop: 3, elbow: [-7, -34], hand: [-9, -43], rearElbow: [20, -33], rearHand: [33, -38] },
+      strike: { lean: 10, drop: 5, elbow: [24, -32], hand: [39, -34], rearElbow: [20, -33], rearHand: [33, -38], frontFoot: [20, -1] } };
     if (kind === 'special' || kind === 'burst') style = { trail: 'cast', wind: { lean: -5, elbow: [-10, -34], hand: [-4, -45], rearHand: [5, -49] }, strike: { lean: 6, elbow: [21, -39], hand: [34, -47], rearElbow: [12, -31], rearHand: [27, -31] } };
     const windup = Math.max(0.035, action?.windup || 0.11);
     const activeUntil = Math.max(windup + 0.025, action?.activeUntil || windup + 0.07);
@@ -177,6 +180,13 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
       pose = blendPose(pose, poseWith(rest, { lean: -5, drop: 2, elbow: [10, -33], hand: [20, -28] }), 0.5 * recovering * (1 - recoil));
     }
   }
+  if (fighter.grabbedBy != null) {
+    pose = poseWith(rest, { lean: 9, drop: 7, head: [12, -45], shoulder: [9, -36],
+      elbow: [16, -24], hand: [14, -15], rearElbow: [-6, -27], rearHand: [2, -17],
+      rearFoot: [-13, -1], frontFoot: [14, -1] });
+    stroke = 0;
+    style = null;
+  }
   if (recoil > 0) {
     const compression = (fighter.hitType === 'slam' ? 13 : fighter.hitType === 'launch' ? -3 : 6) * recoil;
     for (const key of ['hip', 'shoulder', 'head', 'rearElbow', 'rearHand', 'elbow', 'hand']) {
@@ -188,13 +198,6 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
     pose.elbow = pointMix(pose.elbow, [hitDirection * 24, -29 + compression], recoil);
     pose.hand = pointMix(pose.hand, [hitDirection * 36, -21 + compression], recoil);
     stroke *= 1 - recoil;
-  }
-  if (fighter.grabbedBy != null) {
-    pose = poseWith(rest, { lean: 9, drop: 7, head: [12, -45], shoulder: [9, -36],
-      elbow: [16, -24], hand: [14, -15], rearElbow: [-6, -27], rearHand: [2, -17],
-      rearFoot: [-13, -1], frontFoot: [14, -1] });
-    stroke = 0;
-    style = null;
   }
   return { pose, stroke, style, recoil, speed };
 }
