@@ -3,6 +3,7 @@ import { GRAVITY, clamp, moveFighter } from './physics.js';
 
 const elements = Object.keys(ELEMENTS);
 const COMBAT_TICK = 1 / 30;
+const INPUT_WINDOW = 5 * COMBAT_TICK;
 const countdowns = ['invulnerable', 'stun', 'parryTimer', 'parryCooldown', 'dashTime', 'slow', 'burn', 'attackTimer', 'tell', 'aiTimer', 'jumpTimer', 'comboTimer', 'hitReact', 'frozen', 'counterReady'];
 const stories = ['The wind has gone silent.', 'The harbor has frozen over.', 'The stone guardians have awakened.', 'One final flame. Restore the balance.'];
 
@@ -49,7 +50,8 @@ export class Game {
       weapon: null, weaponHits: 0, dead: false, aiTimer: 0.8 + this.random(),
       bossPhase: 1, tell: 0, action: null,
       dashTime: 0, dashUsed: false, slow: 0, burn: 0, jumpTimer: 0, burnTick: 0,
-      comboIndex: 0, comboTimer: 0, running: false, knockdown: 0,
+      comboIndex: 0, comboTimer: 0, comboCount: 0, running: false, knockdown: 0,
+      finisherWindow: 0, finisherTarget: null, inputRevision: 0,
       buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0,
       hitLag: 0, hitLagAt: -1, stagger: 0,
       hitReact: 0, hitMax: 0, hitDirection: 1, hitStrength: 0, hitType: 'stagger',
@@ -72,6 +74,7 @@ export class Game {
     const s = this.state;
     Object.assign(s.player, { x: 590, y: 555, depth: 555, z: 0, vDepth: 0, vx: 0, vy: 0, grounded: true, jumps: 0, dashUsed: false, dashTime: 0, stun: 0, burn: 0, slow: 0, action: null, guard: false, parryTimer: 0, attackTimer: 0, tell: 0, knockdown: 0, comboIndex: 0, comboTimer: 0 });
     Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false, hitLag: 0, stagger: 0 });
+    this.clearCombatInput(s.player);
   }
 
   spawnEnemy({ boss = false, dummy = false, element, x, y, depth } = {}) {
@@ -136,9 +139,13 @@ export class Game {
   tick(input = {}, dt = 1 / 120) {
     const s = this.state;
     if (s.status !== 'playing' || !Number.isFinite(dt) || dt <= 0) return;
-    // Capture edges even while this fighter is held in a contact pose.
-    this.bufferInput(s.player, input);
     dt = Math.min(dt, 1 / 30);
+    // LF2 ages recent button presses on the world clock, even during hit lag.
+    // Completed directional commands instead wait for an available transition.
+    for (const f of [s.player, ...s.enemies]) {
+      if (f.buffer?.ttl != null && (f.buffer.ttl -= dt) < 1e-9) f.buffer = null;
+    }
+    this.bufferInput(s.player, input);
     s.time += dt;
     s.shake = Math.max(0, s.shake - dt * 24);
     s.slowMotion = Math.max(0, s.slowMotion - dt);
@@ -192,11 +199,11 @@ export class Game {
       return;
     }
     const spec = ELEMENTS[f.element];
+    this.updateFinisherWindow(f, dt);
     f.stagger = Math.max(0, f.stagger - dt * 30);
     for (const key of countdowns) f[key] = Math.max(0, (f[key] || 0) - dt);
     for (const key of Object.keys(f.cooldowns)) f.cooldowns[key] = Math.max(0, f.cooldowns[key] - dt);
     if (f.team === 'enemy') this.bufferInput(f, input);
-    if (f.buffer && (f.buffer.ttl -= dt) <= 0) f.buffer = null;
     if (f.knockdown > 0 && f.grounded) {
       f.knockdown = Math.max(0, f.knockdown - dt);
       if (!f.knockdown) { f.invulnerable = Math.max(f.invulnerable, .28); f.juggle = 0; f.stagger = 0; }
@@ -290,9 +297,12 @@ export class Game {
   }
 
   bufferInput(f, input) {
+    if (input.freshInput && f.buffer?.command) f.buffer = null;
     const kind = ['burst', 'special', 'throw', 'attack', 'dash', 'jump', 'interact'].find(key => input[key]);
     if (kind) f.buffer = {
-      kind, ttl: .24, direction: Number(!!input.right) - Number(!!input.left), depthDirection: Number(!!input.down) - Number(!!input.up),
+      kind, command: !!input.command, ttl: input.command ? null : INPUT_WINDOW,
+      direction: input.attackDirection ?? Number(!!input.right) - Number(!!input.left),
+      depthDirection: input.attackDepthDirection ?? Number(!!input.down) - Number(!!input.up),
       // A jump/dash and a strike can arrive in the same browser frame.
       // Keep that pair as one intent instead of silently discarding the movement.
       mobility: ['attack', 'special', 'burst', 'throw'].includes(kind) ? input.dash ? 'dash' : input.jump ? 'jump' : null : null,
@@ -301,9 +311,38 @@ export class Game {
 
   endAction(f) { f.action = null; f.armor = false; f.tell = 0; f.attackTimer = 0; }
 
+  clearCombatInput(f) {
+    f.buffer = null;
+    f.comboTimer = 0;
+    f.comboCount = 0;
+    f.finisherWindow = 0;
+    f.finisherTarget = null;
+    f.inputRevision++;
+  }
+
+  inFinisherLane(f, target) {
+    return !target.dead && target.hp > 0 && target.knockdown <= 0 &&
+      (target.x - f.x) * f.facing >= -12 && Math.abs(target.depth - f.depth) < 32 &&
+      Math.abs(target.z + target.h / 2 - f.z - f.h / 2) < 70;
+  }
+
+  updateFinisherWindow(f, dt = 0) {
+    f.finisherWindow = Math.max(0, f.finisherWindow - dt);
+    const reach = COMBAT[f.element].steps[2].reach;
+    const target = this.targets(f).find(target => this.inFinisherLane(f, target) &&
+      target.stun > 0 && target.hitType === 'dizzy' && Math.abs(target.x - f.x) < reach + target.w / 2);
+    if (target) {
+      // Inspired by kind-6 vulnerability contacts and LF2's three-tick marker.
+      // Our original arena retains frontal targeting and its wider lane scale.
+      f.finisherTarget = target.id;
+      f.finisherWindow = 3 * COMBAT_TICK;
+    } else if (f.finisherWindow < 1e-9) f.finisherTarget = null;
+  }
+
   consumeBuffer(f) {
     const queued = f.buffer;
     if (!queued || f.dashTime > 0) return;
+    if (queued.afterDash) { queued.afterDash = false; queued.ttl = INPUT_WINDOW; }
     const kind = queued.kind;
     const skill = kind === 'special' || kind === 'burst';
     if (skill && f.energy < ELEMENTS[f.element][`${kind}Cost`]) {
@@ -313,21 +352,27 @@ export class Game {
     }
     const action = f.action;
     if (action) {
-      const followup = kind === 'attack' && f.comboIndex < 3;
       const mobility = (kind === 'jump' && f.element === 'air') || (kind === 'dash' && ['air', 'fire'].includes(f.element));
-      if (action.kind !== 'melee' || !action.connected || action.t < action.chainAt || !(followup || skill || mobility)) return;
+      // Basic jabs finish recovery. Only our authored power/mobility links cancel.
+      if (action.kind !== 'melee' || !action.connected || action.t < action.chainAt || !(skill || mobility)) return;
       if (queued.mobility === 'jump' && f.element !== 'air') return;
       if (queued.mobility === 'dash' && !['air', 'fire'].includes(f.element)) return;
       if (skill && (f.cooldowns[kind] > 0 || f.energy < ELEMENTS[f.element][`${kind}Cost`])) return;
       if (kind === 'jump' && !f.grounded && f.jumps >= 2) return;
       if (kind === 'dash' && (f.cooldowns.dash > 0 || f.dashUsed || f.energy < 8)) return;
       this.endAction(f);
-      if (followup) f.cooldowns.attack = 0;
+      if (mobility) f.cooldowns.attack = 0;
     }
     if (queued.mobility) {
       const movement = queued.mobility;
       queued.mobility = null;
-      if (this.performMobility(f, movement, queued) && movement === 'dash') return;
+      if (this.performMobility(f, movement, queued) && movement === 'dash') {
+        // Simultaneous dash + strike is an explicit paired move in our game.
+        // The strike's short input window starts when that dash completes.
+        queued.afterDash = true;
+        queued.ttl = null;
+        return;
+      }
     }
     if (kind === 'jump' || kind === 'dash') {
       if (this.performMobility(f, kind, queued)) f.buffer = null;
@@ -387,8 +432,13 @@ export class Game {
     }
     f.energy -= cost;
     if (kind === 'melee') {
-      f.comboIndex = f.comboTimer > 0 ? f.comboIndex % 3 + 1 : 1;
+      this.updateFinisherWindow(f);
+      const target = this.targets(f).find(target => target.id === f.finisherTarget);
+      const finish = !f.weapon && !f.running && f.finisherWindow > 0 && target && this.inFinisherLane(f, target);
+      f.comboIndex = finish ? 3 : f.comboTimer > 0 && f.comboIndex === 1 ? 2 : 1;
+      f.comboCount = f.comboTimer > 0 ? f.comboCount + 1 : 1;
       f.comboTimer = 1.05;
+      if (finish) { f.finisherWindow = 0; f.finisherTarget = null; }
     }
     const move = kind === 'melee' ? { ...COMBAT[f.element].steps[f.comboIndex - 1] } : null;
     let windup = move?.windup ?? (kind === 'burst' ? .2 : .1);
@@ -494,7 +544,7 @@ export class Game {
       if (target.parryTimer > 0) {
         if (options.contact && source && source !== target && source.cooldowns) {
           source.stun = .65;
-          source.buffer = null;
+          this.clearCombatInput(source);
           this.endAction(source);
           source.vx = -direction * 260;
           Object.assign(source, { hitReact: .24, hitMax: .24, hitDirection: -direction, hitStrength: .6, hitType: 'stagger' });
@@ -550,6 +600,7 @@ export class Game {
     target.invulnerable = target.team === 'player' ? .28 : .075;
     if (!armored) {
       this.endAction(target);
+      if (!blocked) this.clearCombatInput(target);
       target.vx = direction * knockback;
       const airborne = target.z > 20;
       if (!blocked && (options.launcher || airborne)) target.juggle++;
@@ -694,7 +745,13 @@ export class Game {
     }
     // Follow-ups commit to the same lane. Stepping around a combo leaves its
     // recovery open; opponents do not swivel an active attack to track you.
-    if (e.action?.kind === 'melee' && e.action.connected && e.comboIndex < (this.state.settings.difficulty === 'easy' && !boss ? 2 : 3) && e.action.t >= e.action.chainAt && Math.abs(lane) < 30 && Math.abs(dx) < 145) input.attack = true;
+    if (e.action?.kind === 'melee' && e.action.connected && !e.action.followupQueued && e.comboIndex !== 3 &&
+        e.comboCount < (this.state.settings.difficulty === 'easy' && !boss ? 2 : 4) &&
+        e.action.t >= e.action.duration - .1 && Math.abs(lane) < 30 && Math.abs(dx) < 145) {
+      input.attack = true;
+      e.action.followupQueued = true;
+      e.aiTimer = .65 * this.difficulty.aggression;
+    }
     if (e.aiTimer <= 0 && !e.action) {
       const distance = Math.hypot(dx, lane * 1.4);
       if (boss && distance < 300 && e.energy >= 50 && e.cooldowns.burst <= 0) input.burst = true;

@@ -10,7 +10,7 @@ Static investigation of the supplied Little Fighter 2 v2.0a installer, conducted
 - Inspected 79 DAT files, decoding encrypted files and retaining already-plaintext files. Encrypted payloads passed byte-identical decode/encode roundtrips. Extraction and decoding used local Python scripts based on the formats documented in [cicdec](https://github.com/Bioruebe/cicdec/blob/42c3c9d030d75ed9096e3c84ef5ffd19bde51b37/cicdec/Program.cs) and [lf2_codec](https://github.com/azriel91/lf2_codec/blob/00a5ed2f8603bdb940ec2d6b2a1d28a2b0b5d8b7/src/lib.rs).
 - Native analysis used REA 6.5.0 with Ghidra 12.1.4, Node 24.16.0 and JDK 21.0.12.1 on macOS arm64. A persistent REA MCP session retained the imported executable across queries. This follows REA's [native investigation workflow](https://github.com/morluto/rea/blob/main/docs/native-investigation.md).
 
-Local research is under ignored [`output/lf2-analysis/`](../output/lf2-analysis/): `extraction-manifest.json`, `decode-manifest.json`, `rea-doctor.json`, `data-findings.md`, `combat-data.json`, and `evidence/*.json`. Those files include the reproducible details and proprietary material and are deliberately outside the tracked source and distributed assets.
+Local research is under ignored [`output/lf2-analysis/`](../output/lf2-analysis/): `extraction-manifest.json`, `decode-manifest.json`, `rea-doctor.json`, `data-findings.md`, `combat-data.json`, `input-frame-data.json`, `input-research-notes.md`, and `evidence/*.json`. Those files include the reproducible details and proprietary material and are deliberately outside the tracked source and distributed assets.
 
 ## Native evidence
 
@@ -65,7 +65,33 @@ Selected first-jab data illustrates different rhythms:
 
 Davis, Woody and Dennis also specify forward attacker motion on recovery frames, independently of the victim's small jab recoil. Stronger attacks use substantially different launch vectors; Firen explicitly has a light setup contact followed by a stronger launch. These observations support moving the attacker with a connecting sequence and differentiating elemental attack rhythms.
 
-The community [character-format reference](https://www.lf-empire.de/lf2-empire/data-changing/types/167-type-0-characters) interprets ordinary frames as `(wait + 1) / 30` seconds, with a first-frame scheduling caveat. Our evidence verifies counter mechanics, but does not recover the complete caller ordering or measure input-to-hit latency. We did **not** establish an exact LF2 input-buffer/cancel window or prove that the listed stronger attacks automatically follow two jab presses.
+The community [character-format reference](https://www.lf-empire.de/lf2-empire/data-changing/types/167-type-0-characters) interprets ordinary frames as `(wait + 1) / 30` seconds, with a first-frame scheduling caveat. Our evidence verifies counter mechanics, but does not measure live input-to-hit latency. The follow-up investigation below establishes how recent inputs are stored and when ordinary jabs can transition.
+
+### Follow-up: input age and combo transition windows
+
+The same extracted executable was reopened through REA for this investigation. These observations come from static decompilation, corroborated against its disassembly and decoded character data; LF2 was not run under Windows.
+
+| Address | Observed responsibility | Local evidence artifact | REA evidence ID |
+|---|---|---|---|
+| `0x413080` | Input age, fresh presses, command dispatch and ordinary actions | `evidence/input-dispatch.json` | `ev_319c1cacbe810efdad03558eff011d3d8f10a287c5251e66e74a0057246739cd` |
+| `0x41bc90` | World update ordering, including input dispatch before movement | `evidence/input-world-loop.json` | `ev_f1de0e992ca71d696695d9d5d03dbd13771e5f7b330e34c1970c9ebfee39eaaf` |
+| `0x40e2d0` | Explicit frame transition and input-counter consumption | `evidence/input-frame-transition.json` | `ev_8526dc8904c08cd5899202547e928df1edf0332b8014b01af7f0dab5e2f1d017` |
+| `0x412800` | Defend → right → attack recognition | `evidence/input-command-forward.json` | `ev_3266445ea23a5a7a7c64e6f833948d5bd43d25edc5287d6ea200b0c067059e46` |
+| `0x417400` | Interaction/body overlap and depth eligibility | `evidence/input-hit-geometry.json` | `ev_5d6fce286091c9fa1effa478d9736ecefefc093ed614f6bd766bbdceb37fa9a2` |
+
+**Basic input is remembered for five update samples.** The attack dispatcher compares previous input at object offset `0xca` with current input at `0xd1`. A fresh press writes 5 to the attack-age byte `0xbe` at `0x4131fc`; subsequent calls decrement it before checking actions. Its positive values are 5, 4, 3, 2 and 1, including the initial press sample. A held key does not refresh this counter. Five nominal 30 Hz updates correspond to approximately 167 ms, rather than an independently measured wall-clock deadline.
+
+The neutral standing/walking branch checks both positive attack age and attack still held. A tap fully released before neutral is therefore insufficient on that path. Explicit frame `hit_a` transitions use recent-input ages instead, choosing attack only when its age is greater than the competing jump and defend ages. They can accept a released tap. A successful explicit transition clears the relevant input counters. These are distinct mechanisms, not one universal input queue.
+
+**Input age continues during contact hitlag.** The world loop calls input dispatch for active objects without a per-object hitlag gate; the dispatcher ages inputs before action handling. Movement and frame progression use their separate hitlag gates described above. A very early press can consequently expire while a fighter is still paused by contact.
+
+**Ordinary jabs complete their recovery.** In all seven inspected characters, ordinary punch frames 60–68 use state 3, zero `hit_a`, `hit_d` and `hit_j`, and eventually `next:999` to return to neutral. They provide no direct jab-to-jab cancel. The next jab is selected by neutral input handling. Explicit exceptions are present elsewhere: Woody's running-attack frame 78 has `hit_a:70`, and Dennis's super-punch frame 75 exposes selected special-command transitions. The character data defines those opportunities frame by frame.
+
+**The finisher depends on a nearby opening.** Neutral unarmed attacks randomly choose frame 60 or 65 unless the marker at `0xea` is positive, in which case they choose super-punch frame 70. The kind-6 collision branch at `0x43057a` sets this marker to 3 on the receiving fighter. Broken-guard and dizzy frames emit these interactions: for example, Davis frames 112–114 and 226–229 contain kind-6 rectangles. Continued overlap refreshes the marker; after leaving it, the marker decays over three eligible counter updates, pausing during hitlag. This is proximity-based vulnerability, not a fixed third-press finisher. The neutral selection itself has no extra facing check.
+
+**Special commands keep ordered state separately.** The defend → right → attack recognizer advances a stage byte on fresh input and executes only when the current frame offers a matching transition. Its stages do not have the basic five-tick expiry. If the current frame cannot execute a completed command, it can remain pending until a valid frame or an incompatible fresh input; a second defend is one way to clear it. The related reset helper at `0x40e170` checks new edges, and a disassembly audit found no separate countdown for the command-stage bytes. This supports persistent command recognition; it is not a proof of every special-case interaction or aliasing write.
+
+[STM1993's original input experiments](https://lf-empire.de/forum/showthread.php?tid=10499) proposed a five-TU neutral buffer but marked it unverified. The native evidence above establishes the counter and narrows that claim with its held-input condition. The same researcher's observations about command ordering and cancellation are consistent with the inspected recognizer. No live keyboard-latency, operating-system polling or network timing was measured.
 
 ## Adaptation for our game
 
@@ -78,7 +104,18 @@ The implementation follows these findings while preserving our elemental mechani
 - Express distinct elemental startup, active and recovery rhythms in nominal 30 Hz units, then tune them to our game's scale. These are authored adaptations, not imported character data or a claim of frame-perfect LF2 emulation.
 - Give Earth's overhead finisher a downward spike against airborne enemies, while Air lifts vertically and Fire drives enemies sideways. Retain Water's pull, freeze and parry counter.
 - Hold each fighter's animation clock during local hitlag, with a small victim-only shake and a distinct dizzy pose. Reduced motion disables the shake.
+- Keep one basic action for `5 / 30` seconds and age it during contact hitlag. Accept released taps as a deliberate browser-game convenience; this is more forgiving than LF2's inspected neutral held-input condition. Holding a button does not repeatedly enqueue it.
+- Finish ordinary jab recovery before starting the next jab. Alternate the two ordinary elemental strikes deterministically; LF2 randomly selects its two variants. Choose the stronger elemental finisher from a nearby frontal dizzy or guard-broken opponent, with a three-tick grace period after that opening. The frontal requirement and our stagger categories are adaptations of LF2's interaction-marker rule.
+- Retain the game's explicit elemental-power and mobility cancel windows after confirmed contact. A simultaneous dash + attack is an explicit paired move: its attack buffer begins after the dash; an eligible mobility cancel releases the old melee cooldown for the chase. These authored options are additions to LF2's ordinary jab rules, not recovered native cancellations.
+- Recognize the supported defend/direction/attack commands without the former 700 ms deadline. A conflicting fresh input or explicit input clear cancels the sequence. Match, focus and interruption resets remain game-specific policy.
 
-The REA session was closed with its evidence saved to `output/lf2-analysis/lf2-native-snapshot.json`. REA, Ghidra and the analysis JDK are local research tools under the ignored output folder; the game still has zero runtime dependencies.
+The first REA session's evidence is saved to `output/lf2-analysis/lf2-native-snapshot.json`; the follow-up input session is saved to `output/lf2-analysis/evidence/input-session-snapshot.json`. REA, Ghidra and the analysis JDK are local research tools under the ignored output folder; the game still has zero runtime dependencies.
 
-This investigation did not run LF2 under Windows, measure live frame pacing, recover all input transitions, or reproduce every rest, airborne, armor and special-state rule. The browser implementation and its tests remain the evidence for how our adaptation behaves.
+This investigation did not run LF2 under Windows, measure live frame pacing, recover every input transition, or reproduce every rest, airborne, armor and special-state rule. Five-tick recency and the inspected transition conditions are static findings; frame-perfect LF2 input emulation is not claimed. The browser implementation and its tests remain the evidence for how our adaptation behaves.
+
+
+## Browser adaptation validation
+
+On 15 October 2026, all 112 Node tests and JavaScript syntax checks passed. New timing regressions were verified failing before implementation. Coverage includes the input expiry boundary during hitlag, full recovery before jab follow-ups, whiffs and blocks, target eligibility and marker grace, ordered commands and interruption, quick-tap direction capture, and physical guard/parry edges.
+
+Keyboard-driven Chromium checks at the local game URL confirmed Air and Water finishers after four contacts, Earth after three, and Fire after four. The corresponding reactions were launch, freeze, slam and forward knockdown. A held/repeated J produced one attack; a command with 950 ms and 850 ms gaps still cast; an incompatible direction invalidated the command. Survival crowd play with full motion remained finite, all game assets returned HTTP 200, and the browser console had zero errors or warnings. Screenshots and test output remain in ignored `output/` directories.

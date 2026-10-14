@@ -56,7 +56,7 @@ test('melee hit lag freezes its participants while another fighter and projectil
   assert.notEqual(projectile.x, before.shot, 'a distant projectile continues through the arena');
 });
 
-test('hit lag preserves action, cooldown, stun and queued-input time until participants resume', () => {
+test('hit lag preserves action and reaction clocks while recent input continues to age', () => {
   const { game, player, target } = fixture();
   player.cooldowns.special = 1;
   firstContact(game, target);
@@ -66,14 +66,13 @@ test('hit lag preserves action, cooldown, stun and queued-input time until parti
   assert.equal(player.buffer?.kind, 'attack', 'an input edge during contact is retained');
   const ttl = player.buffer.ttl;
   game.tick({}, STEP);
-  assert.equal(player.buffer.ttl, ttl, 'freeze does not consume the input window');
+  assert.ok(player.buffer.ttl < ttl, 'recent input ages even while the contact pose is frozen');
   assert.equal(action.t, before.actionTime);
   assert.equal(player.cooldowns.special, before.cooldown);
   assert.equal(target.stun, before.stun);
   assert.equal(target.stagger, before.stagger, 'pressure does not decay during contact freeze');
-  const hp = target.hp;
-  until(game, () => player.action && player.action !== action, 'the queued follow-up starts after the freeze');
-  until(game, () => target.hp < hp, 'the queued follow-up reaches the naturally recoiling target');
+  until(game, () => !player.action, 'the jab finishes recovery');
+  assert.equal(player.buffer, null, 'a tap too early in the freeze expires before recovery ends');
 });
 
 test('melee participants resume together regardless of their order in the fighter update', () => {
@@ -226,8 +225,7 @@ test('bosses recover from a pressure hit instead of entering an ordinary fighter
 
 test('earth finisher drives an airborne opponent down and recovery begins after landing', () => {
   const { game, player, target } = fixture('earth');
-  Object.assign(player, { comboIndex: 2, comboTimer: 1 });
-  Object.assign(target, { z: 60, y: target.depth - 60, vy: -200, grounded: false });
+  Object.assign(target, { z: 60, y: target.depth - 60, vy: -200, grounded: false, hitType: 'dizzy', stun: .65 });
   firstContact(game, target);
   assert.equal(player.comboIndex, 3);
   assert.ok(target.z > 20, 'the finisher catches an opponent in the air');

@@ -1,5 +1,6 @@
 import { Game } from './engine.js';
 import { Renderer } from './renderer.js';
+import { KeyboardInput, PLAY_KEYS } from './input.js';
 import { ELEMENTS, ARENAS, MODES, DIFFICULTIES } from './data.js';
 
 const $ = (id) => document.getElementById(id);
@@ -12,15 +13,7 @@ const storage = loadStorage();
 const preferences = storage.settings;
 const canvas = $('game-canvas');
 const renderer = new Renderer(canvas);
-const held = new Set();
-const presses = new Set();
-const edgeKeys = { Space: 'jump', ShiftLeft: 'dash', ShiftRight: 'dash', KeyJ: 'attack', KeyK: 'special', KeyL: 'burst', KeyE: 'interact', KeyU: 'throw' };
-const directionKeys = { KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down' };
-const playKeys = new Set(['KeyA', 'KeyD', 'KeyW', 'KeyS', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyI', ...Object.keys(edgeKeys)]);
-const lastDirectionTap = { left: -Infinity, right: -Infinity };
-let runDirection = null;
-let command = null;
-let commandCast = false;
+const keyboard = new KeyboardInput();
 let game;
 let lastStatus = 'ready';
 let lastTime = 0;
@@ -134,64 +127,8 @@ function updatePreferences() {
 }
 
 function clearInput() {
-  held.clear();
-  presses.clear();
-  lastDirectionTap.left = lastDirectionTap.right = -Infinity;
-  runDirection = null;
-  command = null;
-  commandCast = false;
+  keyboard.clear();
   accumulator = 0;
-}
-
-function directionHeld(direction) {
-  return Object.entries(directionKeys).some(([code, value]) => value === direction && held.has(code));
-}
-
-function queueKeyPress(code, now) {
-  const direction = directionKeys[code];
-  if (direction === 'left' || direction === 'right') {
-    if (!directionHeld(direction)) {
-      runDirection = now - lastDirectionTap[direction] <= 250 ? direction : null;
-      lastDirectionTap[direction] = now;
-      lastDirectionTap[direction === 'left' ? 'right' : 'left'] = -Infinity;
-    }
-    if (runDirection && runDirection !== direction) runDirection = null;
-  }
-  if (command && now - command.started > 700) command = null;
-  if (code === 'KeyI') {
-    command = { started: now, direction: null };
-  } else if (direction && command) {
-    command.direction = direction === 'down' ? null : direction;
-  } else if (code === 'KeyJ' && command?.direction) {
-    presses.delete('attack');
-    presses.add(command.direction === 'up' ? 'burst' : 'special');
-    commandCast = true;
-    command = null;
-    return;
-  } else if (edgeKeys[code]) {
-    command = null;
-  }
-  if (edgeKeys[code]) presses.add(edgeKeys[code]);
-}
-
-function releaseKey(code) {
-  held.delete(code);
-  if (runDirection && !directionHeld(runDirection)) runDirection = null;
-}
-
-function readInput() {
-  const input = {
-    left: directionHeld('left'),
-    right: directionHeld('right'),
-    up: directionHeld('up'),
-    down: directionHeld('down'),
-    guard: held.has('KeyI') && !commandCast,
-    run: Boolean(runDirection && directionHeld(runDirection) && !directionHeld(runDirection === 'left' ? 'right' : 'left')),
-  };
-  for (const action of Object.values(edgeKeys)) input[action] = presses.has(action);
-  presses.clear();
-  commandCast = false;
-  return input;
 }
 
 function createPreview() {
@@ -416,7 +353,9 @@ function animate(timestamp) {
   if (game.state.status === 'playing') {
     accumulator += elapsed;
     while (accumulator >= STEP && game.state.status === 'playing') {
-      game.tick(readInput(), STEP);
+      const revision = game.state.player.inputRevision;
+      game.tick(keyboard.read(), STEP);
+      if (game.state.player.inputRevision !== revision) keyboard.clearCommand();
       accumulator -= STEP;
     }
   } else accumulator = 0;
@@ -475,14 +414,13 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'Tab' && status === 'playing') { event.preventDefault(); pauseGame(); return; }
   if (event.code === 'KeyR' && (status === 'won' || status === 'lost')) { event.preventDefault(); if (!event.repeat) retry(); return; }
   if (event.code === 'Enter' && status === 'ready' && !nativeControl) { event.preventDefault(); startRun(); return; }
-  if (status !== 'playing' || nativeControl || !playKeys.has(event.code)) return;
+  if (status !== 'playing' || nativeControl || !PLAY_KEYS.has(event.code)) return;
   event.preventDefault();
-  if (!event.repeat) queueKeyPress(event.code, performance.now());
-  held.add(event.code);
+  keyboard.press(event.code, performance.now(), { repeat: event.repeat });
 });
 window.addEventListener('keyup', (event) => {
-  releaseKey(event.code);
-  if (game.state.status === 'playing' && playKeys.has(event.code)) event.preventDefault();
+  keyboard.release(event.code);
+  if (game.state.status === 'playing' && PLAY_KEYS.has(event.code)) event.preventDefault();
 });
 window.addEventListener('blur', () => { pauseGame(); clearInput(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { pauseGame(); clearInput(); } });
