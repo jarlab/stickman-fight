@@ -41,7 +41,8 @@ button { transition: background-color .15s, border-color .15s; }
 .utility-button:hover:not(:disabled) { background: #e8ece2; }
 .utility-button > span { color: var(--muted); margin-left: 4px; }
 .utility-button kbd { margin-left: 7px; font-size: 9px; min-height: auto; border: 0; padding: 0; background: transparent; color: var(--muted); }
-.setup { display: grid; grid-template-columns: minmax(290px, 1.5fr) 1fr 1.15fr .8fr 130px; gap: 24px; align-items: end; padding: 0 0 16px; }
+.setup { display: grid; grid-template-columns: minmax(270px, 1.5fr) .9fr 1.1fr .65fr 1.05fr 130px; gap: 10px 18px; align-items: end; padding: 0 0 16px; }
+.setup-note { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 9px; line-height: 1.4; }
 fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 legend, .field-label { display: block; font-size: 10px; color: var(--muted); letter-spacing: 1px; font-weight: 650; padding: 0; margin-bottom: 9px; }
 legend > span, .field-label > span { color: var(--ink); margin-left: 7px; }
@@ -159,7 +160,7 @@ kbd { display: inline-grid; place-items: center; min-width: 21px; min-height: 22
 @media (min-width: 1600px) { .app { padding: 0 32px; } }
 @media (max-width: 1100px) {
   .app { padding: 0 24px; }
-  .setup { gap: 12px; grid-template-columns: 1.6fr 1fr 1.2fr .8fr; }
+  .setup { gap: 10px 12px; grid-template-columns: 1.6fr .9fr 1.2fr .7fr 1.1fr; }
   .setup-start { display: none; }
   .local-label { display: none; }
   .hud { padding: 15px 20px; gap: 16px; }

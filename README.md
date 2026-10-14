@@ -27,8 +27,8 @@ Open **http://127.0.0.1:5173** in a desktop browser. No `npm install`, game edit
 | I | Guard; raise it just before a frontal hit to parry |
 | I → left/right → J | Elemental shot command |
 | I → up → J | Signature command |
-| E | Pick up an item, drink a potion, or drop a held weapon |
-| U | Throw your weapon or crate |
+| E | Grab a nearby dizzy enemy while unarmed / release; otherwise pick up, drink or drop |
+| U | Throw a held enemy into the crowd, or throw your weapon |
 | Escape | Pause / resume |
 | R after a run | Retry |
 | Tab / Enter | Navigate / activate menus |
@@ -38,6 +38,8 @@ Open **http://127.0.0.1:5173** in a desktop browser. No `npm install`, game edit
 Tap **J** toward the end of each jab to keep attacking. One recent input is remembered for about **167 ms**, including time spent in a contact pause; holding the key does not repeat attacks. Ordinary jabs complete their recovery before the next strike. They alternate until an opponent's stagger or broken guard opens a close-range elemental finisher, so the third press is not automatically a heavy attack. The small hit streak beside your score counts confirmed hits and expires after a pause in contact.
 
 After a melee hit connects, **K** or **L** can cancel during its follow-up window if you have enough energy and the power is ready. Air can jump or dash out of a confirmed hit; Fire can dash. These elemental options are deliberate additions to the LF2-inspired jab rhythm. Commands such as **I → right → J** remember their ordered steps without a time limit; a conflicting fresh input or a second **I** clears the pending sequence.
+
+After an enemy staggers and shows stars, approach unarmed and press **E** to grab. Turn left or right, then press **U** to throw; hold up/down with U to aim through depth. The flying body can knock down multiple opponents, then takes damage on landing. **E** releases without throwing. You stand still and remain vulnerable while holding someone; they escape after a short time, and guardians break free faster.
 
 Contact briefly holds the two fighters while the surrounding crowd keeps moving. Quick, connected jabs build stagger pressure and step forward during recovery; leaving a gap lets pressure drain. Sustained pressure can make an opponent dizzy, then knock them down. Projectiles hold their victim without stopping the caster.
 
@@ -50,12 +52,12 @@ Contact briefly holds the two fighters while the surrounding crowd keeps moving.
 
 ## Modes
 
-All modes, classes, arenas and difficulties are available immediately.
+All modes, classes, arenas and difficulties are available immediately. **Enemies per wave** offers Auto (the original mode progression) or **1–12** opponents. Custom counts include the guardian on boss waves. Training replenishes that many sparring partners. Counts persist between visits and have separate personal bests.
 
 - **Survival:** endless waves; an elemental guardian every third wave.
-- **Training:** one sparring opponent, regenerating health/energy, unlimited lives.
-- **Tournament:** three consecutive guardian fights.
-- **Challenge:** defeat twelve opponents across three waves with one life.
+- **Training:** sparring opponents, regenerating health/energy, unlimited lives; one partner on Auto.
+- **Tournament:** three consecutive guardian fights; custom counts add supporting enemies.
+- **Challenge:** three waves with one life; twelve opponents on Auto, or three times your selected count.
 - **Story:** four short combat stages through the elemental sanctuaries, each with a guardian. This is a combat prototype, not a narrative campaign.
 
 Normal runs have three lives and no time limit. Easy/normal/hard adjust enemy strength and aggression. Bosses gain a second phase below half health. A cleared wave restores some health and energy.
@@ -73,6 +75,7 @@ npm run check  # JavaScript syntax checks
 
 - `src/engine.js`: combat, waves, pickups, lives and modes.
 - `src/enemy-ai.js`: enemy approach, crowd spacing, reactions and attack selection.
+- `src/grapples.js`: linked holds, escape, body throws, crowd contacts and landing injury.
 - `src/physics.js`: ground-plane movement, bounds and jump height.
 - `src/data.js`: classes, arenas and balance values.
 - `src/renderer.js`: Canvas scenes, fighters and effects.
@@ -85,3 +88,5 @@ The initial platform-arena direction was replaced with LF2-style depth movement 
 The [LF2 combat investigation](docs/lf2-combat-investigation.md) records the extracted character-data findings, REA/Ghidra evidence and the adaptations made here. Original LF2 assets and analysis tools are excluded from the game source.
 
 The [LF2 enemy AI investigation](docs/lf2-ai-investigation.md) records native targeting, spacing, attack and defense findings. Surrounding positions and coordinated attack turns are original adaptations for Fourfold, rather than claims of a recovered LF2 formation system.
+
+The [LF2 grab and throw investigation](docs/lf2-grab-investigation.md) records the native dizzy-state catches, grip budget, thrown-body attacks and separate landing injury behind our E/U adaptation.

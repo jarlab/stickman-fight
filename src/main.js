@@ -7,7 +7,7 @@ const $ = (id) => document.getElementById(id);
 const STORAGE_KEY = 'fourfold:v1';
 const STEP = 1 / 120;
 const symbols = { air: '≋', water: '◡', earth: '◇', fire: '⋀' };
-const defaults = { element: 'air', arena: 'air', mode: 'survival', difficulty: 'normal', sound: false, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches };
+const defaults = { element: 'air', arena: 'air', mode: 'survival', difficulty: 'normal', enemyCount: 'auto', sound: false, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches };
 const fields = { element: ELEMENTS, arena: ARENAS, mode: MODES, difficulty: DIFFICULTIES };
 const storage = loadStorage();
 const preferences = storage.settings;
@@ -34,13 +34,18 @@ function loadStorage() {
     for (const key of ['sound', 'reducedMotion']) {
       if (typeof parsed.settings?.[key] === 'boolean') result.settings[key] = parsed.settings[key];
     }
+    if (Number.isInteger(parsed.settings?.enemyCount) && parsed.settings.enemyCount >= 1 && parsed.settings.enemyCount <= 12) {
+      result.settings.enemyCount = parsed.settings.enemyCount;
+    }
     if (parsed.records && typeof parsed.records === 'object') {
       for (const mode of Object.keys(MODES)) {
         for (const difficulty of Object.keys(DIFFICULTIES)) {
-          const key = `${mode}:${difficulty}`;
-          const saved = parsed.records[key];
-          if (!saved || typeof saved !== 'object') continue;
-          result.records[key] = Object.fromEntries(['score', 'wave', 'completions', 'runs'].map((field) => [field, Number.isFinite(saved[field]) && saved[field] >= 0 ? Math.floor(Math.min(saved[field], 1e9)) : 0]));
+          for (const enemyCount of ['auto', ...Array.from({ length: 12 }, (_, index) => index + 1)]) {
+            const key = settingsRecordKey({ mode, difficulty, enemyCount });
+            const saved = parsed.records[key];
+            if (!saved || typeof saved !== 'object') continue;
+            result.records[key] = Object.fromEntries(['score', 'wave', 'completions', 'runs'].map((field) => [field, Number.isFinite(saved[field]) && saved[field] >= 0 ? Math.floor(Math.min(saved[field], 1e9)) : 0]));
+          }
         }
       }
     }
@@ -61,7 +66,12 @@ function saveStorage() {
 
 function recordKey() {
   const settings = game?.state.settings || preferences;
-  return `${settings.mode}:${settings.difficulty}`;
+  return settingsRecordKey(settings);
+}
+
+function settingsRecordKey(settings) {
+  const base = `${settings.mode}:${settings.difficulty}`;
+  return Number.isInteger(settings.enemyCount) ? `${base}:enemies:${settings.enemyCount}` : base;
 }
 
 function recordRun(finished = false) {
@@ -90,7 +100,7 @@ function updatePreferences() {
   for (const button of document.querySelectorAll('[data-element]')) {
     button.setAttribute('aria-pressed', String(button.dataset.element === preferences.element));
   }
-  for (const name of ['mode', 'arena', 'difficulty']) $(name + '-select').value = preferences[name];
+  for (const name of ['mode', 'arena', 'difficulty', 'enemyCount']) $(name + '-select').value = preferences[name];
   for (const [key, values] of [['arena', ARENAS], ['mode', MODES], ['difficulty', DIFFICULTIES]]) {
     for (const option of $(key + '-select').options) option.textContent = values[option.value].name;
   }
@@ -152,7 +162,8 @@ function startRun() {
   syncStatus();
   canvas.focus({ preventScroll: true });
   document.querySelector('.masthead').scrollIntoView({ block: 'start', behavior: 'instant' });
-  announce(`${ELEMENTS[preferences.element].name}, ${MODES[preferences.mode].name}, ${DIFFICULTIES[preferences.difficulty].name}. Fight!`);
+  const crowd = preferences.enemyCount === 'auto' ? '' : ` ${preferences.enemyCount} ${preferences.enemyCount === 1 ? 'enemy' : 'enemies'} per wave.`;
+  announce(`${ELEMENTS[preferences.element].name}, ${MODES[preferences.mode].name}, ${DIFFICULTIES[preferences.difficulty].name}.${crowd} Fight!`);
   tone(320, 600, .16, .025);
 }
 
@@ -242,7 +253,7 @@ function updateHud() {
   const shotReadiness = abilityReadiness(p, 'special', element.specialCost);
   const burstReadiness = abilityReadiness(p, 'burst', element.burstCost);
   const hitStreak = s.combo >= 2 && s.comboTimer > 0 && s.status !== 'ready' ? s.combo : 0;
-  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, s.arena, s.objective, shotReadiness, burstReadiness, hitStreak].join('|');
+  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, p.grabTarget, s.arena, s.objective, shotReadiness, burstReadiness, hitStreak].join('|');
   if (signature !== hudSignature) {
     hudSignature = signature;
     updateMeter('health', p.hp, p.maxHp);
@@ -252,8 +263,10 @@ function updateHud() {
     $('shot-label').textContent = `${element.special} · ${element.specialCost} · ${shotReadiness}`;
     $('burst-label').textContent = `${element.burst} · ${element.burstCost} · ${burstReadiness}`;
     $('energy-meter').title = `Energy ${Math.floor(p.energy)} / ${p.maxEnergy}. ${element.burst}: ${burstReadiness}.`;
-    $('mode-label').textContent = `${MODES[mode].name.toUpperCase()} / ${DIFFICULTIES[s.settings.difficulty].name.toUpperCase()}`;
-    $('stage-label').textContent = s.status === 'ready' ? 'READY WHEN YOU ARE' : mode === 'training' ? 'PRACTICE YOUR FLOW' : mode === 'story' ? `STAGE ${s.wave} / 4` : mode === 'tournament' ? `GUARDIAN ${s.wave} / 3` : mode === 'challenge' ? `${s.kills} / 12 DEFEATED` : `WAVE ${String(s.wave).padStart(2, '0')}`;
+    const countLabel = Number.isInteger(s.settings.enemyCount) ? ` / ${s.settings.enemyCount} ${s.settings.enemyCount === 1 ? 'ENEMY' : 'ENEMIES'}` : '';
+    $('mode-label').textContent = `${MODES[mode].name.toUpperCase()} / ${DIFFICULTIES[s.settings.difficulty].name.toUpperCase()}${countLabel}`;
+    const challengeGoal = Number.isInteger(s.settings.enemyCount) ? s.settings.enemyCount * 3 : 12;
+    $('stage-label').textContent = s.status === 'ready' ? 'READY WHEN YOU ARE' : mode === 'training' ? 'PRACTICE YOUR FLOW' : mode === 'story' ? `STAGE ${s.wave} / 4` : mode === 'tournament' ? `GUARDIAN ${s.wave} / 3` : mode === 'challenge' ? `${s.kills} / ${challengeGoal} DEFEATED` : `WAVE ${String(s.wave).padStart(2, '0')}`;
     $('objective-label').textContent = s.objective || MODES[mode].objective;
     const lives = mode === 'training' ? Infinity : Math.max(0, s.lives);
     $('lives-value').textContent = lives === Infinity ? '∞' : lives ? Array(lives).fill('●').join(' ') : '—';
@@ -263,7 +276,7 @@ function updateHud() {
     $('combo-value').textContent = `${hitStreak} HITS`;
     $('combo-value').setAttribute('aria-label', `${hitStreak} confirmed hits`);
     $('arena-name').textContent = ARENAS[s.arena].name.toUpperCase();
-    $('weapon-label').textContent = p.weapon ? `${p.weapon.toUpperCase()} · ${p.weaponHits} HITS · U THROW / E DROP` : 'UNARMED · E PICK UP / DRINK';
+    $('weapon-label').textContent = p.grabTarget != null ? 'ENEMY HELD · U THROW / E RELEASE' : p.weapon ? `${p.weapon.toUpperCase()} · ${p.weaponHits} HITS · U THROW / E DROP` : 'UNARMED · E GRAB / PICK UP / DRINK';
   }
   const boss = s.enemies.find((enemy) => enemy.type === 'boss' && !enemy.dead && enemy.hp > 0);
   $('boss-hud').hidden = !boss || s.status === 'ready';
@@ -374,10 +387,10 @@ for (const button of document.querySelectorAll('[data-element]')) {
     saveStorage();
   });
 }
-for (const name of ['mode', 'arena', 'difficulty']) {
+for (const name of ['mode', 'arena', 'difficulty', 'enemyCount']) {
   $(name + '-select').addEventListener('change', (event) => {
     if (game.state.status !== 'ready') return;
-    preferences[name] = event.target.value;
+    preferences[name] = name === 'enemyCount' && event.target.value !== 'auto' ? Number(event.target.value) : event.target.value;
     createPreview();
     saveStorage();
   });

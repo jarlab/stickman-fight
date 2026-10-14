@@ -15,7 +15,7 @@ const STYLES = {
   fire: { range: 55, shotRange: 300, shotChance: .09, retreat: .3 },
 };
 const alive = f => !f.dead && f.hp > 0;
-const disabled = f => f.stun > 0 || f.knockdown > 0 || f.frozen > 0;
+const disabled = f => f.stun > 0 || f.knockdown > 0 || f.frozen > 0 || f.grabbedBy != null;
 const offensive = f => ['melee', 'special', 'burst', 'throw'].includes(f.action?.kind);
 const pending = f => ['attack', 'special', 'burst', 'throw'].includes(f.buffer?.kind);
 const committed = f => offensive(f) || pending(f);

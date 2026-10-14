@@ -1,6 +1,7 @@
 import { ELEMENTS, COMBAT, ARENAS, MODES, DIFFICULTIES } from './data.js';
 import { GRAVITY, clamp, moveFighter } from './physics.js';
 import { EnemyAI } from './enemy-ai.js';
+import { Grapples } from './grapples.js';
 
 const elements = Object.keys(ELEMENTS);
 const COMBAT_TICK = 1 / 30;
@@ -15,11 +16,13 @@ export class Game {
       arena: config.arena in ARENAS ? config.arena : 'air',
       mode: config.mode in MODES ? config.mode : 'survival',
       difficulty: config.difficulty in DIFFICULTIES ? config.difficulty : 'normal',
+      enemyCount: Number.isInteger(config.enemyCount) && config.enemyCount >= 1 && config.enemyCount <= 12 ? config.enemyCount : 'auto',
     };
     this.seed = config.seed ?? 61721;
     this.nextId = 0;
     this.difficulty = DIFFICULTIES[settings.difficulty];
     this.enemyAI = new EnemyAI();
+    this.grapples = new Grapples();
     this.state = {
       settings, status: 'ready', time: 0, wave: 0, kills: 0, score: 0,
       lives: settings.mode === 'challenge' ? 1 : 3,
@@ -57,6 +60,7 @@ export class Game {
       buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0,
       hitLag: 0, hitLagAt: -1, stagger: 0,
       hitReact: 0, hitMax: 0, hitDirection: 1, hitStrength: 0, hitType: 'stagger',
+      grabTarget: null, grabbedBy: null, grabTime: 0, thrown: null,
     };
   }
 
@@ -74,6 +78,7 @@ export class Game {
 
   placePlayer() {
     const s = this.state;
+    this.grapples.release(this, s.player);
     Object.assign(s.player, { x: 590, y: 555, depth: 555, z: 0, vDepth: 0, vx: 0, vy: 0, grounded: true, jumps: 0, dashUsed: false, dashTime: 0, stun: 0, burn: 0, slow: 0, action: null, guard: false, parryTimer: 0, attackTimer: 0, tell: 0, knockdown: 0, comboIndex: 0, comboTimer: 0 });
     Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false, hitLag: 0, stagger: 0 });
     this.clearCombatInput(s.player);
@@ -94,6 +99,7 @@ export class Game {
     s.wave++;
     s.waveDelay = -1;
     const mode = s.settings.mode;
+    const countOverride = s.settings.enemyCount === 'auto' ? null : s.settings.enemyCount;
     if (mode === 'story') {
       s.arena = elements[s.wave - 1];
       s.projectiles = [];
@@ -104,19 +110,21 @@ export class Game {
       s.objective = stories[s.wave - 1];
     }
     if (mode === 'training') {
-      this.spawnEnemy({ dummy: true, element: 'earth', x: s.player.x + 190, y: s.player.y });
+      for (let i = 0; i < (countOverride ?? 1); i++) this.spawnTrainingEnemy(i);
       this.banner('Training grounds');
     } else if (mode === 'tournament') {
       this.spawnEnemy({ boss: true, element: elements[(s.wave + elements.indexOf(s.settings.element)) % 4] });
+      for (let i = 1; i < (countOverride ?? 1); i++) this.spawnEnemy();
       this.banner(`Guardian ${s.wave} / 3`);
     } else if (mode === 'story') {
       this.spawnEnemy({ boss: true, element: s.arena });
-      for (let i = 0; i < 2; i++) this.spawnEnemy({ element: s.arena });
+      for (let i = 1; i < (countOverride ?? 3); i++) this.spawnEnemy({ element: s.arena });
       this.banner(`Chapter ${s.wave} · ${ARENAS[s.arena].name}`);
     } else {
       const bossWave = mode === 'survival' && s.wave % 3 === 0;
-      const count = mode === 'challenge' ? 4 : Math.min(4 + s.wave, 13);
-      for (let i = 0; i < (bossWave ? Math.max(2, count - 3) : count); i++) this.spawnEnemy();
+      const count = countOverride ?? (mode === 'challenge' ? 4 : Math.min(4 + s.wave, 13));
+      const ordinaryCount = bossWave ? (countOverride == null ? Math.max(2, count - 3) : count - 1) : count;
+      for (let i = 0; i < ordinaryCount; i++) this.spawnEnemy();
       if (bossWave) this.spawnEnemy({ boss: true });
       this.banner(mode === 'challenge' ? `Trial ${s.wave} / 3` : `Wave ${s.wave}${bossWave ? ' · Guardian approaches' : ''}`);
     }
@@ -128,6 +136,16 @@ export class Game {
   }
 
   banner(text) { this.state.banner = text; this.state.bannerTime = 2.7; }
+
+  spawnTrainingEnemy(index = 0) {
+    const s = this.state;
+    while (s.enemies.some(e => e.trainingSlot === index)) index++;
+    const solo = s.settings.enemyCount === 'auto' || s.settings.enemyCount === 1;
+    const enemy = this.spawnEnemy({ dummy: true, element: 'earth',
+      x: solo ? clamp(s.player.x + (s.player.x < 640 ? 190 : -190), 80, 1200) : 120 + index % 6 * 208,
+      depth: solo ? s.player.depth : 460 + Math.floor(index / 6) * 145 });
+    enemy.trainingSlot = index;
+  }
 
   spawnWeapon(weaponOnly = false) {
     const s = this.state;
@@ -163,6 +181,7 @@ export class Game {
       if (e.dead || e.hp <= 0) continue;
       this.updateFighter(e, e.hitLag > 0 ? {} : this.enemyInput(e), step);
     }
+    this.grapples.update(this, step);
     this.separateFighters(step);
     this.updateProjectiles(step);
     this.resolveDeaths();
@@ -170,7 +189,8 @@ export class Game {
     if (s.settings.mode === 'training') {
       s.player.hp = Math.min(s.player.maxHp, s.player.hp + dt * 18);
       s.player.energy = Math.min(100, s.player.energy + dt * 15);
-      if (!s.enemies.length) this.spawnEnemy({ dummy: true, element: 'earth', x: s.player.x < 640 ? 850 : 430, y: 400 });
+      const count = s.settings.enemyCount === 'auto' ? 1 : s.settings.enemyCount;
+      if (s.enemies.length < count) this.spawnTrainingEnemy();
     } else if (!s.enemies.length) {
       if (s.waveDelay < 0) {
         s.waveDelay = 2.2;
@@ -222,6 +242,8 @@ export class Game {
       }
     }
     if (f.hp <= 0) { f.action = null; f.buffer = null; f.guard = false; return; }
+    if (f.grabbedBy != null) { f.buffer = null; return; }
+    if (f.grabTarget != null) { this.grapples.control(this, f, input, dt); return; }
     const disabled = f.stun > 0 || f.knockdown > 0 || f.frozen > 0;
     if (!disabled && input.guard && f.action?.connected && f.action.t >= f.action.chainAt && !f.buffer) this.endAction(f);
     const guardPressed = !!input.guard && !f.guardHeld;
@@ -251,8 +273,8 @@ export class Game {
       this.consumeBuffer(f);
     } else {
       // Small recoil keeps linking hits in reach; launches retain their momentum.
-      f.vx *= Math.exp(-dt * (f.knockdown > 0 ? (f.grounded ? 8 : 1.3) : f.z > 20 ? 2 : 15));
-      f.vDepth *= Math.exp(-dt * 5);
+      f.vx *= Math.exp(-dt * (f.thrown ? .15 : f.knockdown > 0 ? (f.grounded ? 8 : 1.3) : f.z > 20 ? 2 : 15));
+      f.vDepth *= Math.exp(-dt * (f.thrown ? .15 : 5));
       if (f.frozen > 0) { f.vx = 0; f.vDepth = 0; }
       f.action = null;
       f.armor = false;
@@ -276,7 +298,7 @@ export class Game {
         action.done = true;
         if (action.kind === 'throw') this.throwWeapon(f);
         else if (action.kind === 'special') this.shoot(f);
-        else this.burst(f);
+        else if (action.kind === 'burst') this.burst(f);
       }
       if (f.action && action.t >= action.duration) this.endAction(f);
     }
@@ -380,7 +402,7 @@ export class Game {
     if (kind === 'jump' || kind === 'dash') {
       if (this.performMobility(f, kind, queued)) f.buffer = null;
     } else if (kind === 'interact') {
-      if (f.team === 'player') this.pickup(f);
+      if (f.team === 'player' && !this.grapples.tryGrab(this, f)) this.pickup(f);
       f.buffer = null;
     } else if (!f.guard) {
       if (queued.direction) f.facing = queued.direction;
@@ -423,6 +445,7 @@ export class Game {
   }
 
   startAction(f, kind) {
+    if (f.grabbedBy != null || f.grabTarget != null) return false;
     const spec = ELEMENTS[f.element];
     const basic = kind === 'melee' || kind === 'throw';
     const key = basic ? 'attack' : kind;
@@ -537,7 +560,8 @@ export class Game {
 
   damage(target, amount, direction, source, options = {}) {
     const s = this.state;
-    if (target.dead || target.invulnerable > 0 || target.knockdown > 0 || target.hp <= 0) return false;
+    const landing = options.throwLanding && target.thrown;
+    if (target.dead || (!landing && (target.invulnerable > 0 || target.knockdown > 0)) || target.hp <= 0) return false;
     let knockback = options.knockback ?? 350;
     let heavy = !!(options.heavy || options.knockdown);
     let blocked = false;
@@ -587,6 +611,7 @@ export class Game {
     if (target.element === 'earth') { amount *= 0.86; knockback *= 0.75; }
     if (target.type === 'boss') knockback *= 0.55;
     const armored = target.armor && !heavy && !guardBroken;
+    if (!blocked && !armored && (target.grabTarget != null || target.grabbedBy != null)) this.grapples.release(this, target);
     if (armored) amount *= .6;
     if (!blocked && !armored) {
       // Fall pressure is independent of health damage. Bands preserve pressure
@@ -717,7 +742,7 @@ export class Game {
     const dx = p.x - e.x;
     const lane = p.depth - e.depth;
     const input = {};
-    if (e.stun > 0 || e.knockdown > 0 || e.frozen > 0) return input;
+    if (e.stun > 0 || e.knockdown > 0 || e.frozen > 0 || e.grabbedBy != null) return input;
     const boss = e.type === 'boss';
     if (boss && e.hp < e.maxHp * 0.5 && e.bossPhase === 1) {
       e.bossPhase = 2;
@@ -738,6 +763,7 @@ export class Game {
     const fighters = [this.state.player, ...this.state.enemies];
     for (let i = 0; i < fighters.length; i++) for (let j = i + 1; j < fighters.length; j++) {
       const a = fighters[i], b = fighters[j];
+      if (a.grabTarget === b.id || b.grabTarget === a.id || a.thrown || b.thrown) continue;
       if (a.dead || b.dead || a.dashTime > 0 || b.dashTime > 0 || Math.abs(a.depth - b.depth) > 24 || Math.abs(a.z - b.z) > 45) continue;
       const dx = b.x - a.x;
       const distance = (a.w + b.w) / 2;
@@ -791,6 +817,7 @@ export class Game {
     const s = this.state;
     for (const e of s.enemies) {
       if (!e.dead && e.hp > 0) continue;
+      this.grapples.release(this, e);
       e.dead = true;
       s.kills++;
       s.score += e.type === 'boss' ? 1000 : 100;
@@ -802,6 +829,7 @@ export class Game {
     s.enemies = s.enemies.filter(e => !e.dead);
     const p = s.player;
     if (p.hp > 0) return;
+    this.grapples.release(this, p);
     const training = s.settings.mode === 'training';
     if (!training) s.lives--;
     if (s.lives <= 0) {

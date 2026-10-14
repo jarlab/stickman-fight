@@ -118,6 +118,9 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
     rearElbow: [-14 - stride * 3, -32], rearHand: [-9 - stride * 5, -27], elbow: [14 + stride * 3, -35], hand: [19 - stride * 4, -42], weaponAngle: -1.24,
   };
   if (fighter.guard) rest = poseWith(rest, { lean: -2, drop: 2, rearElbow: [6, -39], rearHand: [14, -51], elbow: [12, -35], hand: [16, -51], rearFoot: [-15, -1], frontFoot: [13, -1] });
+  if (fighter.grabTarget != null) rest = poseWith(rest, { lean: 5, drop: 3,
+    elbow: [22, -38], hand: [34, -39], rearElbow: [16, -31], rearHand: [30, -33],
+    rearFoot: [-18, -1], frontFoot: [17, -1] });
   let pose = rest;
   let stroke = 0;
   let style = null;
@@ -131,7 +134,7 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
     }
     if (kind === 'runAttack') style = { trail: 'rush', wind: { lean: 3, drop: 6, hand: [8, -44] }, strike: { lean: 17, drop: 3, elbow: [30, -38], hand: [46, -38], rearFoot: [-25, -4], frontFoot: [20, -1], weaponAngle: -0.08 } };
     if (kind === 'aerial') style = { trail: fighter.element === 'air' ? 'rise' : 'kick', contact: 'frontFoot', wind: { lean: -6, frontKnee: [13, -30], frontFoot: [6, -21], hand: [15, -48] }, strike: { lean: -8, frontKnee: [24, -30], frontFoot: [45, -24], rearFoot: [-19, -14], hand: [16, -49] } };
-    if (kind === 'throw') style = { trail: 'throw', wind: { lean: -8, elbow: [-12, -49], hand: [-17, -64], weaponAngle: -1.8 }, strike: { lean: 12, elbow: [25, -49], hand: [43, -51], weaponAngle: -0.2, frontFoot: [23, -1] } };
+    if (kind === 'throw' || kind === 'bodyThrow') style = { trail: 'throw', wind: { lean: -8, elbow: [-12, -49], hand: [-17, -64], weaponAngle: -1.8 }, strike: { lean: 12, elbow: [25, -49], hand: [43, -51], weaponAngle: -0.2, frontFoot: [23, -1] } };
     if (kind === 'special' || kind === 'burst') style = { trail: 'cast', wind: { lean: -5, elbow: [-10, -34], hand: [-4, -45], rearHand: [5, -49] }, strike: { lean: 6, elbow: [21, -39], hand: [34, -47], rearElbow: [12, -31], rearHand: [27, -31] } };
     const windup = Math.max(0.035, action?.windup || 0.11);
     const activeUntil = Math.max(windup + 0.025, action?.activeUntil || windup + 0.07);
@@ -185,6 +188,13 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
     pose.elbow = pointMix(pose.elbow, [hitDirection * 24, -29 + compression], recoil);
     pose.hand = pointMix(pose.hand, [hitDirection * 36, -21 + compression], recoil);
     stroke *= 1 - recoil;
+  }
+  if (fighter.grabbedBy != null) {
+    pose = poseWith(rest, { lean: 9, drop: 7, head: [12, -45], shoulder: [9, -36],
+      elbow: [16, -24], hand: [14, -15], rearElbow: [-6, -27], rearHand: [2, -17],
+      rearFoot: [-13, -1], frontFoot: [14, -1] });
+    stroke = 0;
+    style = null;
   }
   return { pose, stroke, style, recoil, speed };
 }
@@ -476,7 +486,7 @@ export class Renderer {
       ...projectiles.map(entity => ({ entity, kind: 'projectile' })),
     ].sort((a, b) => groundDepth(a.entity) - groundDepth(b.entity));
     for (const { entity, kind } of objects) {
-      if (kind === 'fighter') this.drawFighter(entity, time, reducedMotion);
+      if (kind === 'fighter') this.drawFighter(entity, time, reducedMotion, state.player);
       else if (kind === 'corpse') this.drawCorpse(entity);
       else if (kind === 'pickup') this.drawWeaponPickup(entity, reducedMotion ? 0 : time);
       else this.drawProjectile(entity, time);
@@ -603,7 +613,7 @@ export class Renderer {
     }
   }
 
-  drawFighter(fighter, time, reducedMotion) {
+  drawFighter(fighter, time, reducedMotion, player) {
     const ctx = this.ctx;
     const h = fighter.h || 66;
     const scale = h / 66;
@@ -619,7 +629,7 @@ export class Renderer {
     const { pose, stroke, style, recoil, speed } = fighterPose(fighter, visualTime, reducedMotion, transitionFrom);
     this.fighterAnimations.set(fighter, { action: fighter.action, time, visualTime, pose, transitionFrom });
     const guarding = Boolean(fighter.guard);
-    const dizzy = (fighter.stun || 0) > 0 && fighter.hitType === 'dizzy';
+    const dizzy = (fighter.stun || 0) > 0 && fighter.hitType === 'dizzy' && fighter.grabbedBy == null;
     const frozen = (fighter.frozen || 0) > 0;
     const isBoss = fighter.type === 'boss';
     const isPlayer = fighter.team === 'player';
@@ -789,6 +799,16 @@ export class Renderer {
         polygon(ctx, [[x, y - 3], [x + 3, y], [x, y + 3], [x - 3, y]], '#d6a047');
       }
       ctx.restore();
+      if (!isPlayer && player && !player.weapon && player.grabTarget == null && fighter.grounded &&
+          Math.abs(fighter.depth - player.depth) < 28 && Math.abs(fighter.x - player.x) <= 84 &&
+          (fighter.x - player.x) * player.facing > 0) {
+        ctx.save();
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#775723';
+        ctx.fillText('E · GRAB', fighter.x, fighter.y - h - 21);
+        ctx.restore();
+      }
     }
     this.drawFighterHealth(fighter, h);
   }
