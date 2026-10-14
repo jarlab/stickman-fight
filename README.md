@@ -20,7 +20,7 @@ Open **http://127.0.0.1:5173** in a desktop browser. No `npm install`, game edit
 | Double-tap left/right | Run while the direction remains held |
 | Space | Jump; press again in the air for a double jump |
 | Shift | Directional dodge / air dash |
-| J | Melee; chain three taps for a knockdown finisher |
+| J | Tap to chain melee attacks; an early tap queues the next attack |
 | J while running / airborne | Running attack / aerial attack |
 | K | Elemental shot |
 | L | Signature ability |
@@ -35,12 +35,14 @@ Open **http://127.0.0.1:5173** in a desktop browser. No `npm install`, game edit
 
 **Match an opponent's lane to land melee and projectile hits.** Shadows show where jumping fighters will land. Watch enemy windups, guard toward an attacker, and move through depth to evade. Energy regenerates; melee hits and knockouts restore more. Weapons wear out. Knockdowns provide a brief protected recovery. Switching tabs automatically pauses.
 
+Tap **J** to build a chain: one early input can buffer during an attack. After a melee hit connects, **K** or **L** can cancel its recovery into an elemental power if you have enough energy and the power is ready. A missed swing still needs to recover. The small hit streak beside your score counts confirmed hits and expires after a pause in contact.
+
 ## Fighters
 
-- **Air / The wanderer:** fast movement, wind bolts, and a crowd-scattering cyclone.
-- **Water / The tidekeeper:** slowing ice shots and a signature that heals while striking nearby enemies.
-- **Earth / The sentinel:** armor, boulders, and a heavy seismic slam.
-- **Fire / The spark:** a spreading ember volley, burning hits, and a damaging flare nova.
+- **Air / The wanderer — Rising wind:** quick palms finish in a rising kick that launches the opponent. Jump after contact to follow up in the air. Wind bolts and a cyclone control crowds.
+- **Water / The tidekeeper — Tidal counter:** the chain draws opponents close and ends in a freeze; strike frozen enemies to shatter them. A successful parry empowers the next strike. Ice shards and a healing tide support this counterattacking style.
+- **Earth / The sentinel — Mountain breaker:** deliberate, planted blows gain armor on the follow-ups and finish with a guard-breaking slam. Boulders and seismic slams punish opponents who stay in range.
+- **Fire / The spark — Blazing rush:** each fast strike advances, ending in a forceful rush. Cancel a confirmed hit into an ember volley or flare nova to maintain pressure and burn opponents.
 
 ## Modes
 
@@ -54,7 +56,7 @@ All modes, classes, arenas and difficulties are available immediately.
 
 Normal runs have three lives and no time limit. Easy/normal/hard adjust enemy strength and aggression. Bosses gain a second phase below half health. A cleared wave restores some health and energy.
 
-Settings, best scores, furthest stages and completed runs save in this browser's local storage by mode/difficulty. Active fights restart after reload. Sound effects are optional synthesized tones; all art is drawn in code.
+Settings, best scores, furthest stages and completed runs save in this browser's local storage by mode/difficulty. Active fights restart after reload. Optional synthesized sound distinguishes landed hits, heavy impacts, blocks, parries and landings; all art is drawn in code.
 
 ## Development
 

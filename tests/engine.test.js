@@ -30,6 +30,35 @@ function opponent(game, x = 555, options = {}) {
   return enemy;
 }
 
+function until(game, predicate, message, seconds = 2) {
+  for (let frame = 0; frame < Math.ceil(seconds / STEP); frame += 1) {
+    if (predicate()) return;
+    game.tick({}, STEP);
+  }
+  assert.ok(predicate(), message);
+}
+
+function combatFixture(element = 'air') {
+  const game = fixture({ element, mode: 'survival' });
+  const enemy = opponent(game, 550, { element: 'air' });
+  Object.assign(enemy, { aiTimer: 100, hp: 2000, maxHp: 2000 });
+  return { game, player: game.state.player, enemy };
+}
+
+function playThreeHitChain(game, enemy) {
+  const reactions = [];
+  for (let hit = 1; hit <= 3; hit += 1) {
+    game.tick({ attack: true }, STEP);
+    until(game, () => game.state.combo >= hit, `hit ${hit} connects without relocating the target`);
+    reactions.push({
+      hp: enemy.hp, vx: enemy.vx, vy: enemy.vy, z: enemy.z,
+      frozen: enemy.frozen || 0, knockdown: enemy.knockdown,
+      invulnerable: enemy.invulnerable, burn: enemy.burn,
+    });
+  }
+  return reactions;
+}
+
 test('all four classes, arenas, difficulties and modes are immediately available', () => {
   assert.deepEqual(Object.keys(ELEMENTS).sort(), ['air', 'earth', 'fire', 'water']);
   assert.deepEqual(Object.keys(ARENAS).sort(), ['air', 'earth', 'fire', 'water']);
@@ -173,19 +202,325 @@ test('running covers more ground than walking with the same input duration', () 
   assert.ok(running.state.player.x - 500 > (walking.state.player.x - 500) * 1.5);
 });
 
-test('three timed melee presses chain into a stronger knockdown finisher', () => {
-  const game = fixture();
-  const enemy = opponent(game, 550);
-  enemy.aiTimer = 100;
-  const combo = [];
-  for (let hit = 0; hit < 3; hit += 1) {
-    Object.assign(enemy, { x: 550, depth: 560, z: 0, y: 560, vx: 0, vy: 0, vDepth: 0, grounded: true, invulnerable: 0, stun: 0 });
+for (const element of Object.keys(ELEMENTS)) {
+  test(`${element} lands a complete three-hit chain on a naturally reacting opponent`, () => {
+    const { game, player, enemy } = combatFixture(element);
+    const initialX = player.x;
+    const hits = playThreeHitChain(game, enemy);
+    assert.equal(player.comboIndex, 3);
+    assert.ok(hits[1].hp < hits[0].hp && hits[2].hp < hits[1].hp);
+    assert.ok(enemy.hitReact > 0, 'contact exposes a visible hit reaction');
+    assert.equal(typeof enemy.hitType, 'string');
+    assert.equal(enemy.hitDirection, 1);
+    assert.ok(enemy.hitStrength > 0);
+    if (element === 'air') {
+      assert.ok(hits[2].vy < -300, 'air finishes with an upward launcher');
+      assert.equal(hits[2].knockdown, 0, 'a launched opponent remains available for juggling');
+      assert.ok(hits[2].invulnerable < 0.25);
+    } else if (element === 'water') {
+      assert.ok(hits.slice(0, 2).some(hit => hit.vx < 0), 'water pulls the target inward during the chain');
+      assert.ok(hits[2].frozen > 0, 'water finishes by freezing its opponent');
+    } else if (element === 'earth') {
+      assert.ok(hits[2].knockdown > 0, 'earth finishes with a hard slam');
+    } else {
+      assert.ok(player.x > initialX + 10, 'fire advances into its combo');
+      assert.ok(hits[2].vx > hits[0].vx, 'fire finishes with a stronger forward impact');
+      assert.ok(hits[2].burn > 0);
+    }
+  });
+}
+
+test('an attack pressed during hit-stop survives the freeze and chains after the hit', () => {
+  const { game, player, enemy } = combatFixture();
+  game.tick({ attack: true }, STEP);
+  until(game, () => game.state.combo === 1, 'the opening punch connects');
+  assert.ok(game.state.hitStop > STEP);
+  const firstAction = player.action;
+  const healthAfterFirstHit = enemy.hp;
+  game.tick({ attack: true }, STEP);
+  until(game, () => player.action && player.action !== firstAction, 'the buffered follow-up begins after hit-stop');
+  until(game, () => enemy.hp < healthAfterFirstHit, 'the buffered follow-up connects');
+});
+
+test('an attack pressed during late recovery is accepted when the fighter is ready', () => {
+  const { game, player, enemy } = combatFixture();
+  enemy.x = 1000;
+  game.tick({ attack: true }, STEP);
+  const firstAction = player.action;
+  until(game, () => firstAction.t >= firstAction.duration - 0.05, 'the first attack reaches late recovery');
+  game.tick({ attack: true }, STEP);
+  until(game, () => player.action && player.action !== firstAction, 'the recovery-buffered attack starts');
+});
+
+test('the one-slot attack buffer produces one follow-up and does not keep auto-chaining', () => {
+  const { game, player } = combatFixture();
+  game.tick({ attack: true }, STEP);
+  const actions = new Set([player.action]);
+  // Several new press events before the next action are one queued intent,
+  // not a list of attacks to play after the player has released the controls.
+  for (let press = 0; press < 5; press += 1) {
     game.tick({ attack: true }, STEP);
-    combo.push(game.state.player.comboIndex);
-    advance(game, 0.42);
+    if (player.action) actions.add(player.action);
   }
-  assert.deepEqual(combo, [1, 2, 3]);
-  assert.ok(enemy.knockdown > 0, 'the third strike knocks the opponent down');
+  for (let frame = 0; frame < 2 * 120; frame += 1) {
+    game.tick({}, STEP);
+    if (player.action) actions.add(player.action);
+  }
+  assert.equal(actions.size, 2);
+  assert.equal(player.action, null);
+});
+
+test('an input buffered during a long stun expires instead of firing after recovery', () => {
+  const { game, player } = combatFixture();
+  player.stun = 1;
+  game.tick({ attack: true }, STEP);
+  let attacked = false;
+  for (let frame = 0; frame < 2 * 120; frame += 1) {
+    game.tick({}, STEP);
+    attacked ||= !!player.action;
+  }
+  assert.equal(attacked, false);
+});
+
+test('a buffered follow-up remembers its pressed direction without turning the current swing', () => {
+  const { game, player } = combatFixture();
+  const behind = opponent(game, 450, { element: 'air' });
+  behind.aiTimer = 100;
+  game.tick({ attack: true }, STEP);
+  until(game, () => game.state.combo === 1, 'the forward punch connects');
+  const firstAction = player.action;
+  const behindHp = behind.hp;
+  game.tick({ left: true, attack: true }, STEP);
+  assert.equal(player.facing, 1, 'the current committed swing stays pointed forward');
+  until(game, () => player.action && player.action !== firstAction, 'the queued opposite-facing strike begins');
+  assert.equal(player.facing, -1);
+  until(game, () => behind.hp < behindHp, 'the queued strike hits the opponent behind the first swing');
+});
+
+test('pressing jump and attack together starts one aerial melee attack', () => {
+  const { game, player } = combatFixture();
+  game.tick({ jump: true, attack: true }, STEP);
+  assert.ok(player.z > 0, 'the jump input is preserved alongside the attack');
+  assert.equal(player.grounded, false);
+  assert.equal(player.action?.kind, 'melee');
+  assert.equal(player.attackKind, 'aerial');
+  const firstAttack = player.action;
+  const actions = new Set([firstAttack]);
+  for (let frame = 0; frame < 120; frame += 1) {
+    game.tick({}, STEP);
+    if (player.action) actions.add(player.action);
+  }
+  assert.equal(actions.size, 1, 'the combined press does not repeat either action');
+});
+
+test('pressing dash and attack together dashes first and performs one queued attack afterward', () => {
+  const { game, player, enemy } = combatFixture();
+  enemy.x = 740;
+  game.tick({ dash: true, attack: true, right: true }, STEP);
+  assert.ok(player.dashTime > 0);
+  assert.equal(player.action, null, 'the attack waits for the dash to finish');
+  until(game, () => player.action?.kind === 'melee', 'the combined press queues the attack after the dash');
+  assert.equal(player.dashTime, 0);
+  const actions = new Set([player.action]);
+  for (let frame = 0; frame < 120; frame += 1) {
+    game.tick({}, STEP);
+    if (player.action) actions.add(player.action);
+  }
+  assert.equal(actions.size, 1);
+});
+
+for (const skill of ['special', 'burst']) {
+  test(`an unaffordable ${skill} keeps held guard without repeating its energy warning`, () => {
+    const { game, player } = combatFixture();
+    advance(game, 0.5, { guard: true });
+    player.energy = 0;
+    game.state.floaters = [];
+    game.tick({ guard: true, [skill]: true }, STEP);
+    assert.equal(player.guard, true, 'a rejected skill does not lower guard');
+    advance(game, 0.3, { guard: true });
+    assert.equal(player.guard, true);
+    assert.equal(player.action, null);
+    const messages = game.state.floaters.filter(floater => floater.text === 'Need energy');
+    assert.ok(messages.length <= 1, 'the rejected press emits at most one message');
+  });
+
+  test(`a ${skill} still on cooldown cannot lower held guard`, () => {
+    const { game, player } = combatFixture();
+    advance(game, 0.5, { guard: true });
+    player.cooldowns[skill] = 1;
+    game.tick({ guard: true, [skill]: true }, STEP);
+    assert.equal(player.guard, true);
+    advance(game, 0.3, { guard: true });
+    assert.equal(player.guard, true);
+    assert.equal(player.action, null);
+  });
+}
+
+test('a confirmed melee hit can cancel its recovery into an elemental shot', () => {
+  const { game, player } = combatFixture();
+  game.tick({ attack: true }, STEP);
+  const meleeAction = player.action;
+  until(game, () => game.state.combo === 1, 'the melee hit connects');
+  game.tick({ special: true }, STEP);
+  until(game, () => player.action?.kind === 'special', 'the confirmed hit accepts the elemental cancel');
+  assert.ok(meleeAction.t < meleeAction.duration, 'the shot replaces recovery instead of waiting for its natural end');
+});
+
+test('a missed melee attack cannot cancel its recovery into an elemental shot', () => {
+  const { game, player, enemy } = combatFixture();
+  enemy.x = 1000;
+  game.tick({ attack: true }, STEP);
+  const meleeAction = player.action;
+  until(game, () => meleeAction.t >= (meleeAction.activeUntil ?? meleeAction.windup + STEP), 'the missed attack passes its active frames');
+  game.tick({ special: true }, STEP);
+  until(game, () => player.action !== meleeAction, 'the original melee action finishes');
+  assert.ok(meleeAction.t >= meleeAction.duration, 'whiffed attacks finish their recovery before another move');
+});
+
+test('hard knockdown stays active until landing and includes a brief get-up period', () => {
+  const { game, player, enemy } = combatFixture();
+  Object.assign(player, { z: 650, y: player.depth - 650, grounded: false });
+  game.damage(player, 5, -1, enemy, { knockdown: true, knockback: 100 });
+  advance(game, 0.85);
+  assert.ok(player.z > 0, 'the test knockdown is still airborne after the old timer would expire');
+  assert.ok(player.knockdown > 0, 'airborne knockdown cannot recover on a wall-clock timer');
+  game.tick({ attack: true }, STEP);
+  assert.equal(player.action, null, 'an airborne knocked-down fighter cannot start an attack');
+  until(game, () => player.grounded, 'the knocked-down fighter lands');
+  assert.ok(player.knockdown > 0, 'landing starts a get-up interval');
+  advance(game, 0.05);
+  assert.ok(player.knockdown > 0);
+  advance(game, 1);
+  assert.equal(player.knockdown, 0, 'the fighter eventually gets up');
+});
+
+test('earth follow-up armor absorbs a light interruption while its attack remains committed', () => {
+  const { game, player, enemy } = combatFixture('earth');
+  player.comboIndex = 1;
+  player.comboTimer = 1;
+  game.tick({ attack: true }, STEP);
+  assert.equal(player.comboIndex, 2);
+  const armoredAction = player.action;
+  const initialHp = player.hp;
+  game.damage(player, 10, -1, enemy, { light: true, knockback: 60 });
+  assert.ok(player.hp < initialHp, 'armor does not erase incoming damage');
+  game.tick({}, STEP);
+  assert.equal(player.action, armoredAction, 'a light hit cannot cancel the armored windup');
+  until(game, () => game.state.combo > 0, 'the armored blow follows through and connects');
+});
+
+test('earth finisher breaks an established frontal guard', () => {
+  const { game, player, enemy } = combatFixture('earth');
+  player.comboIndex = 2;
+  player.comboTimer = 1;
+  Object.assign(enemy, { facing: -1, guard: true, parryTimer: 0, parryCooldown: 100 });
+  game.enemyInput = () => ({ guard: true });
+  const initialHp = enemy.hp;
+  game.tick({ attack: true }, STEP);
+  until(game, () => enemy.hp < initialHp, 'the guarded finisher connects');
+  assert.equal(enemy.guard, false);
+  assert.ok(initialHp - enemy.hp > ELEMENTS.earth.damage, 'the guard does not reduce the slam to chip damage');
+  assert.ok(enemy.knockdown > 0);
+});
+
+test('water freeze can be shattered by the next confirmed hit', () => {
+  const { game, player, enemy } = combatFixture('water');
+  playThreeHitChain(game, enemy);
+  assert.ok(enemy.frozen > 0);
+  until(game, () => !player.action, 'the freeze finisher recovers');
+  game.tick({ attack: true }, STEP);
+  until(game, () => game.state.combo >= 4, 'the follow-up hits the frozen opponent');
+  assert.equal(enemy.frozen, 0);
+  assert.ok(enemy.knockdown > 0, 'the shattering strike converts freeze to a hard knockdown');
+});
+
+test('one active swing damages each target only once even after its brief invulnerability expires', () => {
+  const { game, player } = combatFixture('water');
+  player.comboIndex = 1;
+  player.comboTimer = 1;
+  game.tick({ attack: true }, STEP);
+  until(game, () => game.state.combo === 1, 'the pulling strike hits');
+  until(game, () => !player.action, 'all active and recovery frames finish');
+  assert.equal(game.state.combo, 1);
+});
+
+test('water parry empowers one counterstrike and freezes the attacker', () => {
+  const normal = combatFixture('water');
+  const counter = combatFixture('water');
+  const normalHp = normal.enemy.hp;
+  normal.game.tick({ attack: true }, STEP);
+  until(normal.game, () => normal.game.state.combo === 1, 'the ordinary opening strike hits');
+  const ordinaryDamage = normalHp - normal.enemy.hp;
+
+  counter.game.tick({ guard: true }, STEP);
+  counter.game.damage(counter.player, 20, -1, counter.enemy);
+  assert.ok(counter.player.counterReady > 0);
+  const counterHp = counter.enemy.hp;
+  counter.game.tick({ attack: true }, STEP);
+  until(counter.game, () => counter.game.state.combo === 1, 'the counterstrike hits');
+  assert.ok(counterHp - counter.enemy.hp > ordinaryDamage * 1.4);
+  assert.equal(counter.player.counterReady, 0, 'the earned counter is consumed by one attack');
+  assert.ok(counter.enemy.frozen > 0);
+});
+
+test('air can jump-cancel its launcher and connect a natural aerial chase', () => {
+  const { game, player, enemy } = combatFixture('air');
+  playThreeHitChain(game, enemy);
+  const launcher = player.action;
+  game.tick({ jump: true }, STEP);
+  until(game, () => player.z > 0, 'air jumps out of confirmed launcher recovery');
+  assert.ok(launcher.t < launcher.duration);
+  assert.ok(enemy.z > 0, 'the launched opponent is still airborne');
+  game.tick({ attack: true, right: true }, STEP);
+  until(game, () => game.state.combo >= 4, 'the aerial follow-up reaches the naturally moving target');
+});
+
+test('repeated airborne hits eventually cause hard knockdown instead of an endless juggle', () => {
+  const { game, player, enemy } = combatFixture('air');
+  Object.assign(enemy, { z: 150, y: enemy.depth - 150, grounded: false });
+  for (let hit = 1; hit <= 3; hit += 1) {
+    until(game, () => enemy.invulnerable <= 0, 'the next distinct hit becomes eligible');
+    assert.equal(game.damage(enemy, 5, 1, player, { light: true, lift: 180, knockback: 0 }), true);
+    if (hit < 3) assert.equal(enemy.knockdown, 0);
+  }
+  assert.ok(enemy.knockdown > 0);
+  until(game, () => enemy.invulnerable <= 0, 'the hit immunity expires while the opponent stays knocked down');
+  const knockedDownHp = enemy.hp;
+  assert.equal(game.damage(enemy, 5, 1, player, { light: true }), false);
+  assert.equal(enemy.hp, knockedDownHp);
+});
+
+test('fire can dash-cancel a confirmed strike but must recover from a whiff', () => {
+  const connected = combatFixture('fire');
+  connected.game.tick({ attack: true }, STEP);
+  const connectedAction = connected.player.action;
+  until(connected.game, () => connected.game.state.combo === 1, 'fire connects its strike');
+  connected.game.tick({ dash: true, right: true }, STEP);
+  until(connected.game, () => connected.player.dashTime > 0, 'fire cancels the hit into a dash');
+  assert.ok(connectedAction.t < connectedAction.duration);
+
+  const missed = combatFixture('fire');
+  missed.enemy.x = 1000;
+  missed.game.tick({ attack: true }, STEP);
+  const missedAction = missed.player.action;
+  until(missed.game, () => missedAction.t >= missedAction.activeUntil, 'the whiff passes its active frames');
+  missed.game.tick({ dash: true, right: true }, STEP);
+  until(missed.game, () => missed.player.dashTime > 0, 'the buffered dash eventually starts');
+  assert.ok(missedAction.t >= missedAction.duration);
+});
+
+test('holding guard through hit stun does not create a fresh timed parry on recovery', () => {
+  const { game, player, enemy } = combatFixture();
+  const rear = opponent(game, 450);
+  rear.aiTimer = 100;
+  advance(game, 0.8, { guard: true });
+  game.damage(player, 20, 1, rear);
+  advance(game, 0.36, { guard: true });
+  assert.equal(player.invulnerable, 0);
+  assert.equal(player.guard, true);
+  const beforeFrontHit = player.hp;
+  game.damage(player, 20, -1, enemy);
+  assert.ok(player.hp < beforeFrontHit, 'continuous guard blocks with chip damage instead of automatically parrying');
 });
 
 test('a running attack knocks an aligned opponent back harder than a standing attack', () => {

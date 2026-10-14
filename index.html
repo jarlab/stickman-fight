@@ -52,7 +52,7 @@
               </div>
             </div>
             <div class="round-hud"><span id="mode-label">SURVIVAL</span><strong id="stage-label">READY WHEN YOU ARE</strong><span id="objective-label">A boss every third wave.</span></div>
-            <div class="run-hud"><div><span class="hud-caption">LIVES</span><strong id="lives-value" aria-label="3 lives">● ● ●</strong></div><div><span class="hud-caption">SCORE</span><strong id="score-value">00000</strong></div></div>
+            <div class="run-hud"><div><span class="hud-caption">LIVES</span><strong id="lives-value" aria-label="3 lives">● ● ●</strong></div><div class="score-hud"><span class="hud-caption">SCORE</span><strong id="score-value">00000</strong><span id="combo-value" class="hit-streak" hidden></span></div></div>
           </div>
           <div class="canvas-wrap">
             <canvas id="game-canvas" width="1280" height="720" tabindex="0" aria-label="Fourfold fighting arena. WASD or arrows move in four directions across the arena floor. Match an enemy's lane to hit. Space jumps, J chains attacks, U throws a weapon. Full controls follow the arena."></canvas>
@@ -87,7 +87,7 @@
           <div class="controls-heading"><h2>Make your move.</h2><p>Match their lane to land a hit.</p></div>
           <div class="control-group"><span class="control-label">MOVE</span><div><kbd>WASD</kbd><span>/ arrows move in depth</span><kbd>Space</kbd><span>double jump</span></div><div><span>Double-tap ← / → to run</span><kbd>Shift</kbd><span>directional dodge</span></div></div>
           <div class="control-group"><span class="control-label">FIGHT</span><div><kbd>J</kbd><span>3-hit chain</span><kbd>K</kbd><span id="shot-label">air shot</span><kbd>L</kbd><span id="burst-label">signature</span></div><div><kbd>I</kbd><span>guard / parry</span><kbd>E</kbd><span>pick up / drink / drop</span><kbd>U</kbd><span>throw</span></div></div>
-          <p class="command-help"><span>Match their lane to land a hit.</span><span>Run + <kbd>J</kbd> dash attack</span><span><kbd>I</kbd> → <kbd>← / →</kbd> → <kbd>J</kbd> cast</span><span><kbd>I</kbd> → <kbd>↑</kbd> → <kbd>J</kbd> signature</span><span>Drink pickups restore health or energy.</span></p>
+          <p class="command-help"><span>Tap <kbd>J</kbd> to chain; early taps buffer.</span><span><kbd>J</kbd> → <kbd>K / L</kbd> after contact cancels into powers.</span><span>Run + <kbd>J</kbd> dash attack</span><span><kbd>I</kbd> → <kbd>← / →</kbd> → <kbd>J</kbd> cast</span><span><kbd>I</kbd> → <kbd>↑</kbd> → <kbd>J</kbd> signature</span></p>
         </section>
         <footer class="page-footer"><span>FOURFOLD / PLAYABLE PROTOTYPE</span><span id="save-status">Local play. Your bests stay with you.</span><span>KEYBOARD REQUIRED</span></footer>
       </main>

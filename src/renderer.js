@@ -53,6 +53,132 @@ function groundDepth(entity) {
   return Number.isFinite(entity.depth) ? entity.depth : (entity.y || 0) + (entity.z || 0);
 }
 
+const POSE_JOINTS = ['hip', 'shoulder', 'head', 'rearKnee', 'rearFoot', 'frontKnee', 'frontFoot', 'rearElbow', 'rearHand', 'elbow', 'hand'];
+const clamp01 = value => Math.max(0, Math.min(1, value));
+const smooth = value => { const t = clamp01(value); return t * t * (3 - 2 * t); };
+const mix = (a, b, t) => a + (b - a) * t;
+const pointMix = (a, b, t) => [mix(a[0], b[0], t), mix(a[1], b[1], t)];
+
+// Original combat silhouettes: every class has its own preparation and contact poses.
+const COMBO_POSES = {
+  air: [
+    { trail: 'palm', wind: { lean: -5, elbow: [-7, -41], hand: [-11, -45], rearHand: [14, -46] }, strike: { lean: 9, elbow: [25, -43], hand: [41, -44], rearHand: [-8, -31], frontFoot: [17, -1] } },
+    { trail: 'palm', contact: 'rearHand', wind: { lean: -3, rearElbow: [-12, -36], rearHand: [-11, -44], hand: [18, -49] }, strike: { lean: 7, rearElbow: [24, -39], rearHand: [42, -36], elbow: [10, -40], hand: [16, -51], frontFoot: [18, -1] } },
+    { trail: 'rise', contact: 'frontFoot', wind: { lean: -4, drop: 4, frontKnee: [14, -20], frontFoot: [12, -7], hand: [15, -48] }, strike: { lean: -8, drop: -2, frontKnee: [18, -43], frontFoot: [29, -66], rearFoot: [-8, -1], rearHand: [-18, -33], elbow: [7, -38], hand: [17, -50] } },
+  ],
+  water: [
+    { trail: 'sweep', wind: { lean: -6, hand: [-9, -57], elbow: [-11, -44], rearHand: [19, -35] }, strike: { lean: 6, drop: 5, elbow: [19, -25], hand: [38, -22], rearHand: [-18, -37], frontFoot: [19, -1], rearFoot: [-17, -1] } },
+    { trail: 'pull', wind: { lean: 8, elbow: [25, -35], hand: [43, -32], rearHand: [23, -49] }, strike: { lean: -9, drop: 3, elbow: [-8, -35], hand: [6, -43], rearElbow: [-17, -31], rearHand: [-23, -36], frontFoot: [19, -1], rearFoot: [-19, -1] } },
+    { trail: 'freeze', wind: { lean: -6, hand: [-9, -43], elbow: [-12, -34], rearHand: [-3, -53] }, strike: { lean: 7, elbow: [23, -44], hand: [40, -45], rearElbow: [12, -31], rearHand: [28, -33], frontFoot: [19, -1], rearFoot: [-18, -1] } },
+  ],
+  earth: [
+    { trail: 'punch', wind: { lean: -3, drop: 4, hand: [-7, -42], elbow: [-11, -33], frontFoot: [21, -1], rearFoot: [-20, -1] }, strike: { lean: 7, drop: 3, elbow: [23, -42], hand: [38, -41], rearHand: [-10, -35], frontFoot: [22, -1], rearFoot: [-21, -1] } },
+    { trail: 'body', wind: { lean: -6, drop: 7, elbow: [-12, -28], hand: [-8, -34], frontFoot: [22, -1], rearFoot: [-22, -1] }, strike: { lean: 13, drop: 8, elbow: [26, -28], hand: [42, -29], rearHand: [-6, -43], frontFoot: [24, -1], rearFoot: [-22, -1] } },
+    { trail: 'slam', wind: { lean: -4, drop: -1, elbow: [-13, -53], hand: [-10, -70], rearElbow: [12, -53], rearHand: [14, -70], frontFoot: [23, -1], rearFoot: [-22, -1] }, strike: { lean: 12, drop: 14, elbow: [21, -18], hand: [29, -4], rearElbow: [8, -21], rearHand: [20, -9], frontKnee: [18, -11], rearKnee: [-16, -10], frontFoot: [25, -1], rearFoot: [-22, -1] } },
+  ],
+  fire: [
+    { trail: 'punch', wind: { lean: -4, elbow: [-7, -36], hand: [-5, -47], rearHand: [17, -41] }, strike: { lean: 10, elbow: [26, -44], hand: [43, -44], rearHand: [-9, -32], frontFoot: [17, -1], rearFoot: [-18, -1] } },
+    { trail: 'cross', wind: { lean: -8, elbow: [-13, -39], hand: [-12, -48], rearHand: [19, -45] }, strike: { lean: 13, drop: 1, elbow: [29, -41], hand: [46, -48], rearElbow: [-9, -32], rearHand: [-15, -27], frontFoot: [23, -1], rearFoot: [-23, -1] } },
+    { trail: 'kick', contact: 'frontFoot', wind: { lean: -6, drop: 3, frontKnee: [15, -26], frontFoot: [6, -15], hand: [15, -48] }, strike: { lean: 4, drop: -2, frontKnee: [28, -29], frontFoot: [51, -29], rearKnee: [-12, -20], rearFoot: [-23, -7], elbow: [10, -40], hand: [18, -51], rearHand: [-19, -29] } },
+  ],
+};
+
+function poseWith(base, overrides) {
+  const pose = {};
+  for (const key of POSE_JOINTS) pose[key] = [...base[key]];
+  pose.weaponAngle = base.weaponAngle;
+  const lean = overrides.lean || 0;
+  const drop = overrides.drop || 0;
+  pose.hip = [lean * 0.3, -27 + drop];
+  pose.shoulder = [lean, -45 + drop];
+  pose.head = [lean + 1, -57 + drop];
+  for (const key of POSE_JOINTS) if (overrides[key]) pose[key] = [...overrides[key]];
+  if (overrides.weaponAngle !== undefined) pose.weaponAngle = overrides.weaponAngle;
+  return pose;
+}
+
+function blendPose(a, b, amount) {
+  const pose = {};
+  for (const key of POSE_JOINTS) pose[key] = pointMix(a[key], b[key], amount);
+  pose.weaponAngle = mix(a.weaponAngle, b.weaponAngle, amount);
+  return pose;
+}
+
+function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
+  const frozen = fighter.frozen > 0;
+  const speed = frozen ? 0 : Math.min(1, Math.hypot(fighter.vx || 0, fighter.vDepth || fighter.vd || 0) / 240);
+  const phase = time * (fighter.running ? 18 : 14) + (Number(fighter.id) || 0);
+  const stride = fighter.grounded && !fighter.stun && !frozen ? Math.sin(phase) * speed : 0;
+  const bob = reducedMotion || frozen ? 0 : Math.sin(time * 3.5) * (speed < 0.1 ? 0.7 : 0);
+  const lean = speed * 4;
+  let rest = {
+    hip: [lean * 0.3, -27 + bob], shoulder: [lean, -45 + bob], head: [lean + 1, -57 + bob],
+    rearFoot: fighter.grounded ? [-11 - stride * 11, -1] : [-15, -14], frontFoot: fighter.grounded ? [11 + stride * 11, -1] : [12, -9],
+    rearKnee: [-10 - stride * 3, -15 - Math.abs(stride) * 3], frontKnee: [8 + stride * 5, -15],
+    rearElbow: [-14 - stride * 3, -32], rearHand: [-9 - stride * 5, -27], elbow: [14 + stride * 3, -35], hand: [19 - stride * 4, -42], weaponAngle: -1.24,
+  };
+  if (fighter.guard) rest = poseWith(rest, { lean: -2, drop: 2, rearElbow: [6, -39], rearHand: [14, -51], elbow: [12, -35], hand: [16, -51], rearFoot: [-15, -1], frontFoot: [13, -1] });
+  let pose = rest;
+  let stroke = 0;
+  let style = null;
+  const action = fighter.action;
+  if (action || fighter.attackTimer > 0) {
+    const kind = fighter.attackKind || action?.kind || 'melee';
+    const combo = Math.max(0, Math.min(2, (fighter.comboIndex || 1) - 1));
+    style = COMBO_POSES[fighter.element]?.[combo] || COMBO_POSES.air[combo];
+    if (fighter.weapon && kind !== 'special' && kind !== 'burst') {
+      style = { trail: 'weapon', wind: { lean: -7, elbow: [-11, -43], hand: [-14, -55], weaponAngle: -2 }, strike: { lean: 11, elbow: [23, -38], hand: [37, -40], weaponAngle: -0.08, frontFoot: [21, -1], rearFoot: [-18, -1] } };
+    }
+    if (kind === 'runAttack') style = { trail: 'rush', wind: { lean: 3, drop: 6, hand: [8, -44] }, strike: { lean: 17, drop: 3, elbow: [30, -38], hand: [46, -38], rearFoot: [-25, -4], frontFoot: [20, -1], weaponAngle: -0.08 } };
+    if (kind === 'aerial') style = { trail: fighter.element === 'air' ? 'rise' : 'kick', contact: 'frontFoot', wind: { lean: -6, frontKnee: [13, -30], frontFoot: [6, -21], hand: [15, -48] }, strike: { lean: -8, frontKnee: [24, -30], frontFoot: [45, -24], rearFoot: [-19, -14], hand: [16, -49] } };
+    if (kind === 'throw') style = { trail: 'throw', wind: { lean: -8, elbow: [-12, -49], hand: [-17, -64], weaponAngle: -1.8 }, strike: { lean: 12, elbow: [25, -49], hand: [43, -51], weaponAngle: -0.2, frontFoot: [23, -1] } };
+    if (kind === 'special' || kind === 'burst') style = { trail: 'cast', wind: { lean: -5, elbow: [-10, -34], hand: [-4, -45], rearHand: [5, -49] }, strike: { lean: 6, elbow: [21, -39], hand: [34, -47], rearElbow: [12, -31], rearHand: [27, -31] } };
+    const windup = Math.max(0.035, action?.windup || 0.11);
+    const activeUntil = Math.max(windup + 0.025, action?.activeUntil || windup + 0.07);
+    const duration = Math.max(activeUntil + 0.04, action?.duration || activeUntil + 0.18);
+    const t = action ? Math.max(0, action.t || 0) : Math.max(0, duration - fighter.attackTimer);
+    const prepared = poseWith(rest, style.wind);
+    const contact = poseWith(rest, style.strike);
+    const follow = blendPose(contact, rest, 0.1);
+    const anticipationEnd = windup * 0.58;
+    if (t < anticipationEnd) {
+      pose = blendPose(transitionFrom || rest, prepared, smooth(t / anticipationEnd));
+    } else if (t < windup) {
+      const extension = clamp01((t - anticipationEnd) / (windup - anticipationEnd));
+      pose = blendPose(prepared, contact, 1 - (1 - extension) ** 3);
+      stroke = extension * 0.55;
+    } else if (t < activeUntil) {
+      pose = blendPose(contact, follow, smooth((t - windup) / (activeUntil - windup)));
+      stroke = 1;
+    } else {
+      const recovery = smooth((t - activeUntil) / (duration - activeUntil));
+      pose = blendPose(follow, rest, recovery);
+      stroke = Math.max(0, 0.85 - recovery * 2.4);
+    }
+  }
+
+  const hitRatio = clamp01((fighter.hitReact || 0) / (fighter.hitMax || 0.35));
+  const strength = clamp01(fighter.hitStrength ?? 0.5);
+  const recoil = hitRatio ** 0.65 * (0.5 + strength * 0.5);
+  const hitDirection = (fighter.hitDirection || -(fighter.facing || 1)) * (fighter.facing < 0 ? -1 : 1);
+  if (fighter.stun > 0 && !frozen) {
+    pose = blendPose(pose, poseWith(rest, { lean: -8, drop: 4, elbow: [10, -33], hand: [20, -28] }), 0.7 * (1 - recoil));
+  }
+  if (recoil > 0) {
+    const compression = (fighter.hitType === 'slam' ? 13 : fighter.hitType === 'launch' ? -3 : 6) * recoil;
+    for (const key of ['hip', 'shoulder', 'head', 'rearElbow', 'rearHand', 'elbow', 'hand']) {
+      const force = key === 'hip' ? 4 : key === 'head' ? 23 : 16;
+      pose[key] = [pose[key][0] + hitDirection * force * recoil, pose[key][1] + compression];
+    }
+    pose.rearKnee[0] += hitDirection * 5 * recoil;
+    pose.frontKnee[0] += hitDirection * 5 * recoil;
+    pose.elbow = pointMix(pose.elbow, [hitDirection * 24, -29 + compression], recoil);
+    pose.hand = pointMix(pose.hand, [hitDirection * 36, -21 + compression], recoil);
+    stroke *= 1 - recoil;
+  }
+  return { pose, stroke, style, recoil, speed };
+}
+
 function cloud(ctx, x, y, scale, color) {
   ctx.save();
   ctx.translate(x, y);
@@ -139,6 +265,7 @@ export class Renderer {
     canvas.width = WIDTH * this.pixelRatio;
     canvas.height = HEIGHT * this.pixelRatio;
     this.backgrounds = new Map();
+    this.fighterAnimations = new WeakMap();
   }
 
   arenaKey(state) {
@@ -331,7 +458,7 @@ export class Renderer {
     for (const corpse of corpses) this.drawGroundShadow(corpse, 'corpse');
     for (const weapon of weapons) this.drawGroundShadow(weapon, 'pickup');
     for (const projectile of projectiles) if (projectile.kind === 'weapon') this.drawGroundShadow(projectile, 'projectile');
-    for (const effect of state.effects || []) this.drawEffect(effect);
+    for (const effect of state.effects || []) if (effect.kind !== 'impact' && effect.kind !== 'slash') this.drawEffect(effect, reducedMotion);
     const objects = [
       ...fighters.map(entity => ({ entity, kind: 'fighter' })),
       ...corpses.map(entity => ({ entity, kind: 'corpse' })),
@@ -344,7 +471,8 @@ export class Renderer {
       else if (kind === 'pickup') this.drawWeaponPickup(entity, reducedMotion ? 0 : time);
       else this.drawProjectile(entity, time);
     }
-    for (const particle of state.particles || []) this.drawParticle(particle);
+    for (const effect of state.effects || []) if (effect.kind === 'impact' || effect.kind === 'slash') this.drawEffect(effect, reducedMotion);
+    for (const particle of state.particles || []) this.drawParticle(particle, reducedMotion);
     for (const floater of state.floaters || []) this.drawFloater(floater);
     ctx.restore();
 
@@ -471,26 +599,28 @@ export class Renderer {
     const scale = h / 66;
     const color = elementColor(fighter.element);
     const facing = fighter.facing < 0 ? -1 : 1;
-    const speed = Math.min(1, Math.hypot(fighter.vx || 0, fighter.vd || 0) / 210);
-    const grounded = Boolean(fighter.grounded);
-    const attacking = (fighter.attackTimer || 0) > 0;
-    const windingUp = fighter.action && fighter.action.t < fighter.action.windup;
-    const casting = attacking && (fighter.attackKind === 'special' || fighter.attackKind === 'burst');
-    const runningAttack = attacking && fighter.attackKind === 'runAttack';
-    const aerialAttack = attacking && fighter.attackKind === 'aerial';
-    const throwing = attacking && fighter.attackKind === 'throw';
-    const kick = attacking && !windingUp && (fighter.comboIndex === 3 || aerialAttack) && !casting && !throwing;
+    const previous = this.fighterAnimations.get(fighter);
+    const sameAction = previous?.action === fighter.action;
+    const transitionFrom = sameAction ? previous?.transitionFrom : fighter.action && previous?.action && time - previous.time < 0.15 ? previous.pose : null;
+    const { pose, stroke, style, recoil, speed } = fighterPose(fighter, time, reducedMotion, transitionFrom);
+    this.fighterAnimations.set(fighter, { action: fighter.action, time, pose, transitionFrom });
     const guarding = Boolean(fighter.guard);
     const stunned = (fighter.stun || 0) > 0;
+    const frozen = (fighter.frozen || 0) > 0;
     const isBoss = fighter.type === 'boss';
     const isPlayer = fighter.team === 'player';
-    const cycle = time * 14 + Number(fighter.id || 0);
-    const stride = grounded && !stunned ? Math.sin(Number.isFinite(cycle) ? cycle : time * 14) * speed : 0;
-    const idle = reducedMotion ? 0 : Math.sin(time * 3.5) * (speed < 0.1 ? 1 : 0);
+    const hitAge = (fighter.hitMax || 0.35) - (fighter.hitReact || 0);
+    const flash = !reducedMotion && fighter.hitReact > 0 && hitAge < 0.045;
+    const bodyColor = flash ? '#fffdf1' : color;
+    const flutter = reducedMotion || frozen ? 0 : time;
+
+    this.drawLaunchTrail(fighter, time, reducedMotion);
 
     if ((fighter.knockdown || 0) > 0) {
       const airborne = (fighter.z || 0) > 4;
-      this.drawCorpse({ ...fighter, x: fighter.x - (airborne ? 0 : facing * 13), y: fighter.y - 15, rotation: airborne ? time * 11 * facing : Math.PI / 2 * facing, life: 1 });
+      const prone = airborne ? 1 : smooth(fighter.knockdown / 0.18);
+      const rotation = airborne ? Math.PI * 0.38 * (fighter.hitDirection || facing) + (reducedMotion ? 0 : Math.sin(time * 9) * 0.18) : Math.PI / 2 * facing * prone;
+      this.drawCorpse({ ...fighter, x: fighter.x - (airborne ? 0 : facing * 13 * prone), y: fighter.y - 8 - 7 * prone, rotation, life: 1 });
       if (isPlayer) polygon(ctx, [[fighter.x - 5, fighter.y - 36], [fighter.x + 5, fighter.y - 36], [fighter.x, fighter.y - 30]], color, INK, 1);
       this.drawFighterHealth(fighter, airborne ? h : 28);
       return;
@@ -498,8 +628,8 @@ export class Renderer {
 
     ctx.save();
 
-    if (fighter.tell) {
-      ctx.globalAlpha = 0.3 + Math.sin(time * 16) * 0.12;
+    if (fighter.tell && !isPlayer) {
+      ctx.globalAlpha = reducedMotion ? 0.24 : 0.3 + Math.sin(time * 16) * 0.12;
       circle(ctx, fighter.x, fighter.y - h * 0.52, h * 0.68, '#f3a863', '#ba522e', 2);
       ctx.globalAlpha = 1;
       ctx.fillStyle = '#a53b25';
@@ -542,7 +672,7 @@ export class Renderer {
       ctx.globalAlpha = 0.6;
       for (let i = 0; i < 3; i += 1) {
         const x = fighter.x + (i - 1) * 9;
-        const y = fighter.y - 8 - (time * 27 + i * 11) % 39;
+        const y = fighter.y - 8 - (flutter * 27 + i * 11) % 39;
         polygon(ctx, [[x - 3, y + 5], [x, y - 6], [x + 4, y + 4]], '#e88b42');
       }
       ctx.restore();
@@ -550,54 +680,34 @@ export class Renderer {
 
     ctx.translate(fighter.x, fighter.y);
     ctx.scale(scale * facing, scale);
-    if ((fighter.invulnerable || 0) > 0) ctx.globalAlpha = reducedMotion ? 0.8 : 0.64 + Math.sin(time * 30) * 0.18;
-    const lean = stunned ? -11 : windingUp ? -6 : runningAttack ? 12 : kick ? -5 : attacking ? 5 : speed * 4;
-    const hip = [lean * 0.3, -27 + idle];
-    const shoulder = [lean, -45 + idle];
-    const head = [lean + 1, -57 + idle];
-    let rearFoot = grounded ? [-11 - stride * 11, -1] : [-15, -14];
-    let frontFoot = grounded ? [11 + stride * 11, -1] : [12, -9];
-    let rearKnee = [-10 - stride * 3, -15 + Math.abs(stride) * -3];
-    let frontKnee = [8 + stride * 5, -15];
-    if (kick) {
-      rearFoot = aerialAttack ? [-19, -13] : [-10, -1];
-      frontFoot = [43, aerialAttack ? -26 : -31];
-      frontKnee = [22, -30];
-      rearKnee = [-11, -16];
-    } else if (runningAttack && !windingUp) {
-      rearFoot = [-23, -5];
-      rearKnee = [-13, -16];
-      frontFoot = [18, -1];
-      frontKnee = [16, -15];
-    }
+    if ((fighter.invulnerable || 0) > 0) ctx.globalAlpha = reducedMotion ? 0.8 : 0.74 + Math.sin(time * 18) * 0.1;
+    const { hip, shoulder, head, rearFoot, frontFoot, rearKnee, frontKnee, rearElbow, rearHand, elbow, hand } = pose;
     line(ctx, [hip, rearKnee, rearFoot], '#415451', 7);
     line(ctx, [[rearFoot[0] - 2, rearFoot[1]], [rearFoot[0] + 5, rearFoot[1]]], INK, 6);
     line(ctx, [hip, frontKnee, frontFoot], INK, 7);
     line(ctx, [[frontFoot[0] - 1, frontFoot[1]], [frontFoot[0] + 6, frontFoot[1]]], INK, 6);
 
-    const rearElbow = guarding ? [7, -40] : [-14 - stride * 3, -32];
-    const rearHand = guarding ? [14, -51] : [-9 - stride * 5, -27];
     line(ctx, [shoulder, rearElbow, rearHand], '#415451', 6);
     circle(ctx, rearHand[0], rearHand[1], 3, PAPER, INK, 1.4);
     line(ctx, [hip, shoulder], INK, isBoss ? 12 : 9);
 
     if (fighter.element === 'earth') {
-      polygon(ctx, [[shoulder[0] - 8, -47 + idle], [shoulder[0] + 8, -47 + idle], [hip[0] + 9, -27 + idle], [hip[0] - 9, -27 + idle]], color, INK, 2);
-      line(ctx, [[hip[0] - 7, -29 + idle], [hip[0] + 7, -29 + idle]], '#dfd6a0', 3);
+      polygon(ctx, [[shoulder[0] - 8, shoulder[1] - 2], [shoulder[0] + 8, shoulder[1] - 2], [hip[0] + 9, hip[1]], [hip[0] - 9, hip[1]]], bodyColor, INK, 2);
+      line(ctx, [[hip[0] - 7, hip[1] - 2], [hip[0] + 7, hip[1] - 2]], '#dfd6a0', 3);
     } else if (fighter.element === 'water') {
-      polygon(ctx, [[shoulder[0] - 6, -45 + idle], [shoulder[0] + 6, -45 + idle], [hip[0] + 10, -22 + idle], [hip[0] - 10, -22 + idle]], color, INK, 2);
-      line(ctx, [[shoulder[0] - 5, -44 + idle], [hip[0] + 6, -26 + idle]], '#e6f1e7', 3);
+      polygon(ctx, [[shoulder[0] - 6, shoulder[1]], [shoulder[0] + 6, shoulder[1]], [hip[0] + 10, hip[1] + 5], [hip[0] - 10, hip[1] + 5]], bodyColor, INK, 2);
+      line(ctx, [[shoulder[0] - 5, shoulder[1] + 1], [hip[0] + 6, hip[1] + 1]], '#e6f1e7', 3);
     } else {
-      polygon(ctx, [[shoulder[0] - 5, -46 + idle], [shoulder[0] + 6, -45 + idle], [hip[0] + 6, -27 + idle], [hip[0] - 7, -27 + idle]], color, INK, 2);
-      line(ctx, [[shoulder[0] - 4, -44 + idle], [hip[0] + 4, -29 + idle]], '#f4dbab', 3);
+      polygon(ctx, [[shoulder[0] - 5, shoulder[1] - 1], [shoulder[0] + 6, shoulder[1]], [hip[0] + 6, hip[1]], [hip[0] - 7, hip[1]]], bodyColor, INK, 2);
+      line(ctx, [[shoulder[0] - 4, shoulder[1] + 1], [hip[0] + 4, hip[1] - 2]], '#f4dbab', 3);
     }
 
     // Headwear and silhouettes distinguish the four premade fighters.
     circle(ctx, head[0], head[1], 9.5, PAPER, INK, 2.6);
     if (fighter.element === 'air') {
       line(ctx, [[head[0] - 9, head[1] - 3], [head[0] + 8, head[1] - 3]], color, 4);
-      line(ctx, [[head[0] - 9, head[1] - 3], [head[0] - 16, head[1] - 6 + Math.sin(time * 8) * 2]], color, 3);
-      line(ctx, [[shoulder[0] - 4, -43], [-17 - speed * 6, -45 + Math.sin(time * 7) * 3]], color, 4);
+      line(ctx, [[head[0] - 9, head[1] - 3], [head[0] - 16, head[1] - 6 + Math.sin(flutter * 8) * 2]], color, 3);
+      line(ctx, [[shoulder[0] - 4, shoulder[1] + 2], [shoulder[0] - 17 - speed * 6, shoulder[1] + Math.sin(flutter * 7) * 3]], color, 4);
     } else if (fighter.element === 'water') {
       ctx.beginPath();
       ctx.arc(head[0], head[1] - 1, 10, Math.PI, Math.PI * 1.95);
@@ -605,7 +715,7 @@ export class Renderer {
       ctx.lineWidth = 5;
       ctx.stroke();
       line(ctx, [[head[0] - 7, head[1] + 7], [head[0] + 7, head[1] + 7]], '#d8e6e3', 5);
-      line(ctx, [[head[0] - 7, head[1] + 7], [head[0] - 15, head[1] + 14 + Math.sin(time * 6) * 2]], color, 5);
+      line(ctx, [[head[0] - 7, head[1] + 7], [head[0] - 15, head[1] + 14 + Math.sin(flutter * 6) * 2]], color, 5);
     } else if (fighter.element === 'earth') {
       polygon(ctx, [[head[0] - 11, head[1] - 3], [head[0] - 7, head[1] - 12], [head[0] + 7, head[1] - 12], [head[0] + 11, head[1] - 3]], color, INK, 2);
       line(ctx, [[head[0] - 12, head[1] - 3], [head[0] + 11, head[1] - 3]], INK, 2);
@@ -614,61 +724,51 @@ export class Renderer {
       circle(ctx, head[0] - 4, head[1] - 14, 4, INK);
       line(ctx, [[head[0] - 7, head[1] - 10], [head[0] - 1, head[1] - 10]], color, 3);
     }
-    circle(ctx, head[0] + 4, head[1], 1.3, INK);
+    if (recoil > 0.3) line(ctx, [[head[0] + 2, head[1] - 1], [head[0] + 5, head[1] + 1]], INK, 1.5);
+    else circle(ctx, head[0] + 4, head[1], 1.3, INK);
     line(ctx, [[head[0] + 2, head[1] + 4], [head[0] + 5, head[1] + 4]], '#6b6653', 1);
 
-    let elbow = [14 + stride * 3, -35];
-    let hand = [19 - stride * 4, -42];
-    if (guarding) { elbow = [12, -35]; hand = [15, -51]; }
-    if (attacking) { elbow = [23, -44]; hand = [36, -43]; }
-    if (attacking && fighter.comboIndex === 2) { elbow = [23, -35]; hand = [34, -49]; }
-    if (kick) { elbow = [10, -37]; hand = [18, -48]; }
-    if (runningAttack) { elbow = [29, -39]; hand = [43, -38]; }
-    if (throwing) { elbow = [22, -48]; hand = [37, -52]; }
-    if (casting) { elbow = [20, -39]; hand = [30, -48]; }
-    if (windingUp) { elbow = [-13, -39]; hand = [-17, -48]; }
-    if (stunned) { elbow = [11, -36]; hand = [20, -29]; }
     if (fighter.weapon) {
-      if (attacking && !windingUp) this.drawHeldWeapon(fighter.weapon, [8, -40], [61, -46]);
-      else this.drawHeldWeapon(fighter.weapon, [hand[0] - 8, hand[1] + 24], [hand[0] + 10, hand[1] - 28]);
+      const axis = [Math.cos(pose.weaponAngle), Math.sin(pose.weaponAngle)];
+      this.drawHeldWeapon(fighter.weapon, [hand[0] - axis[0] * 23, hand[1] - axis[1] * 23], [hand[0] + axis[0] * 29, hand[1] + axis[1] * 29]);
     }
     line(ctx, [shoulder, elbow, hand], INK, 6);
-    line(ctx, [[elbow[0] + 1, elbow[1]], [hand[0] - 2, hand[1]]], color, 4);
+    line(ctx, [[elbow[0] + 1, elbow[1]], [hand[0] - 2, hand[1]]], bodyColor, 4);
     circle(ctx, hand[0], hand[1], 3.5, PAPER, INK, 1.5);
-
-    if (casting) {
+    if (!fighter.weapon && stroke > 0.3 && (fighter.element === 'air' || fighter.element === 'water')) line(ctx, [[hand[0] + 1, hand[1] - 4], [hand[0] + 1, hand[1] + 4]], PAPER, 3);
+    if (fighter.armor) {
+      line(ctx, [[shoulder[0] - 10, shoulder[1] + 1], [shoulder[0] - 10, shoulder[1] + 11]], '#d9b65e', 3);
+      line(ctx, [[shoulder[0] + 10, shoulder[1] + 1], [shoulder[0] + 10, shoulder[1] + 11]], '#d9b65e', 3);
+      circle(ctx, hip[0], hip[1] - 8, 3, '#ecd08b', INK, 1);
+    }
+    if ((fighter.counterReady || 0) > 0) {
       ctx.save();
-      ctx.globalAlpha *= 0.35;
-      circle(ctx, hand[0] + 8, hand[1], 16, color);
-      ctx.globalAlpha = 0.9;
-      elementGlyph(ctx, fighter.element, hand[0] + 8, hand[1], 9, color, 2.5);
-      ctx.restore();
-    } else if (attacking && !windingUp && !throwing) {
-      ctx.save();
-      ctx.globalAlpha *= 0.6;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = fighter.weapon ? 5 : 4;
-      ctx.beginPath();
-      ctx.arc(kick ? 9 : 18, kick ? -31 : -40, fighter.weapon ? 49 : kick ? 42 : 30, kick ? -0.75 : -1.05, kick ? 0.5 : 0.85);
-      ctx.stroke();
-      ctx.globalAlpha *= 0.6;
-      ctx.strokeStyle = '#fffbee';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(kick ? 9 : 18, kick ? -31 : -40, fighter.weapon ? 54 : kick ? 47 : 35, -0.7, 0.5);
-      ctx.stroke();
+      ctx.globalAlpha *= reducedMotion ? 0.8 : 0.7 + Math.sin(time * 9) * 0.2;
+      circle(ctx, hand[0], hand[1], 10, null, '#f9df96', 2.5);
+      polygon(ctx, [[hand[0] + 12, hand[1] - 6], [hand[0] + 15, hand[1] - 11], [hand[0] + 18, hand[1] - 6], [hand[0] + 15, hand[1] - 1]], '#d6aa4e');
       ctx.restore();
     }
+    this.drawAttackTrail(fighter, pose, style, stroke, reducedMotion);
     if (isBoss) {
       polygon(ctx, [[head[0] - 7, head[1] - 14], [head[0] - 10, head[1] - 21], [head[0] - 3, head[1] - 18], [head[0] + 1, head[1] - 24], [head[0] + 5, head[1] - 18], [head[0] + 11, head[1] - 21], [head[0] + 8, head[1] - 14]], '#e8bf68', INK, 1.5);
     }
     ctx.restore();
 
-    if (stunned) {
+    if (frozen) {
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      polygon(ctx, [[fighter.x - 19 * scale, fighter.y + 1], [fighter.x - 22 * scale, fighter.y - h * 0.55], [fighter.x - 12 * scale, fighter.y - h - 6], [fighter.x + 12 * scale, fighter.y - h - 1], [fighter.x + 23 * scale, fighter.y - h * 0.48], [fighter.x + 19 * scale, fighter.y + 1]], '#c5eafb', '#5f9fb5', 2);
+      ctx.globalAlpha = 0.8;
+      line(ctx, [[fighter.x - 12 * scale, fighter.y - h * 0.5], [fighter.x - 2 * scale, fighter.y - h * 0.78]], '#efffff', 2);
+      line(ctx, [[fighter.x + 7 * scale, fighter.y - 8], [fighter.x + 13 * scale, fighter.y - h * 0.4]], '#efffff', 2);
+      ctx.restore();
+    }
+
+    if (stunned && !frozen) {
       ctx.save();
       ctx.fillStyle = '#dfab4d';
       for (let i = 0; i < 3; i += 1) {
-        const angle = time * 4 + i * 2.1;
+        const angle = (reducedMotion ? 0 : time * 4) + i * 2.1;
         const x = fighter.x + Math.cos(angle) * 17 * scale;
         const y = fighter.y - h - 7 + Math.sin(angle) * 5;
         polygon(ctx, [[x, y - 3], [x + 3, y], [x, y + 3], [x - 3, y]], '#d6a047');
@@ -676,6 +776,97 @@ export class Renderer {
       ctx.restore();
     }
     this.drawFighterHealth(fighter, h);
+  }
+
+  drawLaunchTrail(fighter, time, reducedMotion) {
+    if (reducedMotion || fighter.z < 8 || (!fighter.hitReact && !fighter.knockdown && !fighter.juggle) || fighter.frozen > 0) return;
+    const ctx = this.ctx;
+    const direction = Math.sign(fighter.vx || fighter.hitDirection || 1);
+    const length = Math.min(68, 18 + Math.abs(fighter.vx || 0) * 0.07);
+    const lift = Math.max(-18, Math.min(18, (fighter.vz || -(fighter.vy || 0)) * 0.025));
+    const scale = (fighter.h || 66) / 66;
+    ctx.save();
+    ctx.globalAlpha = 0.28;
+    for (let i = 0; i < 3; i += 1) {
+      const x = fighter.x - direction * 12 * scale;
+      const y = fighter.y - (17 + i * 15) * scale;
+      line(ctx, [[x - direction * (length + i * 6), y + lift], [x - direction * 10, y]], i === 1 ? '#fffaf0' : elementColor(fighter.element), i === 1 ? 4 : 2);
+    }
+    ctx.restore();
+  }
+
+  drawAttackTrail(fighter, pose, style, stroke, reducedMotion) {
+    if (!style || stroke < 0.035) return;
+    const ctx = this.ctx;
+    const color = elementColor(fighter.element);
+    const contact = pose[style.contact || 'hand'];
+    ctx.save();
+    ctx.globalAlpha *= stroke * (reducedMotion ? 0.36 : 0.75);
+    if (style.trail === 'cast') {
+      circle(ctx, contact[0] + 7, contact[1], 12 + stroke * 4, null, color, 2);
+      elementGlyph(ctx, fighter.element, contact[0] + 7, contact[1], 8 + stroke * 3, color, 2);
+    } else if (style.trail === 'throw') {
+      if (!reducedMotion) line(ctx, [[contact[0] - 20, contact[1] + 2], [contact[0] - 5, contact[1]]], '#f8f2dc', 3);
+    } else if (reducedMotion) {
+      line(ctx, [[contact[0] + 4, contact[1] - 5], [contact[0] + 6, contact[1] + 4]], color, 2);
+    } else if (style.trail === 'weapon') {
+      ctx.beginPath();
+      ctx.arc(16, -41, 49, -1.15, 0.55);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    } else if (fighter.element === 'air') {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      if (style.trail === 'rise') ctx.arc(1, -29, 40, 0.5, -1.15, true);
+      else ctx.arc(contact[0] - 3, contact[1], 13, -1.1, 1.1);
+      ctx.stroke();
+      line(ctx, [[contact[0] - 26, contact[1] + 7], [contact[0] - 7, contact[1] + 3]], '#fffae9', 3);
+      line(ctx, [[contact[0] - 32, contact[1] - 4], [contact[0] - 11, contact[1] - 4]], color, 2);
+    } else if (fighter.element === 'water') {
+      if (style.trail === 'freeze') {
+        for (let i = 0; i < 3; i += 1) {
+          const x = contact[0] + 7 + i * 5;
+          const y = contact[1] + (i - 1) * 10;
+          polygon(ctx, [[x - 3, y], [x + 4, y - 5], [x + 8, y], [x + 3, y + 4]], '#d8f1fa', color, 1);
+        }
+      } else {
+        ctx.beginPath();
+        if (style.trail === 'pull') {
+          ctx.moveTo(43, -23);
+          ctx.bezierCurveTo(60, -43, 22, -59, contact[0] + 2, contact[1]);
+        } else {
+          ctx.moveTo(-7, -60);
+          ctx.bezierCurveTo(48, -59, 59, -30, contact[0], contact[1] + 5);
+        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 5;
+        ctx.stroke();
+        ctx.strokeStyle = '#dff5f1';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    } else if (fighter.element === 'earth') {
+      if (style.trail === 'slam') {
+        ctx.beginPath();
+        ctx.ellipse(contact[0], 0, 28, 9, 0, Math.PI, Math.PI * 2);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 4;
+        ctx.stroke();
+        for (let i = 0; i < 3; i += 1) {
+          const x = contact[0] - 25 + i * 24;
+          polygon(ctx, [[x - 4, -2], [x - 2, -11 - i % 2 * 4], [x + 4, -7], [x + 5, -1]], '#bda76d', INK, 1);
+        }
+      } else {
+        polygon(ctx, [[contact[0] - 25, contact[1] - 7], [contact[0] + 6, contact[1] - 3], [contact[0] + 9, contact[1] + 2], [contact[0] - 23, contact[1] + 7]], '#c1a165');
+        line(ctx, [[contact[0] - 26, contact[1] + 9], [contact[0] - 9, contact[1] + 6]], '#f8e8ba', 3);
+      }
+    } else {
+      polygon(ctx, [[contact[0] + 7, contact[1]], [contact[0] - 4, contact[1] - 7], [contact[0] - 33, contact[1] - 11], [contact[0] - 19, contact[1] - 2], [contact[0] - 39, contact[1] + 4], [contact[0] - 7, contact[1] + 6]], color);
+      line(ctx, [[contact[0] - 22, contact[1]], [contact[0] + 2, contact[1]]], '#ffe0a0', 3);
+    }
+    ctx.restore();
   }
 
   drawFighterHealth(fighter, h) {
@@ -739,9 +930,9 @@ export class Renderer {
     ctx.restore();
   }
 
-  drawParticle(particle) {
-    if (particle.kind === 'ring' || particle.kind === 'shockwave') {
-      this.drawEffect(particle);
+  drawParticle(particle, reducedMotion = false) {
+    if (['ring', 'shockwave', 'impact', 'slash'].includes(particle.kind)) {
+      this.drawEffect(particle, reducedMotion);
       return;
     }
     const ctx = this.ctx;
@@ -753,14 +944,51 @@ export class Renderer {
     ctx.restore();
   }
 
-  drawEffect(effect) {
+  drawEffect(effect, reducedMotion = false) {
     const ctx = this.ctx;
     const remaining = Math.min(1, Math.max(0, effect.life / (effect.maxLife || 0.6)));
+    if (effect.kind === 'impact' || effect.kind === 'slash') {
+      const radius = (effect.r || effect.radius || 19) * (effect.heavy ? 1.3 : 1);
+      const size = radius * (reducedMotion ? 0.7 : 0.6 + (1 - remaining) * 0.8);
+      ctx.save();
+      ctx.translate(effect.x, effect.y);
+      ctx.scale(effect.direction < 0 ? -1 : 1, 1);
+      ctx.globalAlpha = remaining * (reducedMotion ? 0.7 : 0.95);
+      if (effect.kind === 'slash') {
+        ctx.beginPath();
+        ctx.arc(-size * 0.6, 0, size, -1, 1);
+        ctx.strokeStyle = effect.color || '#edba5a';
+        ctx.lineWidth = effect.heavy ? 6 : 3;
+        ctx.stroke();
+      } else {
+        const rays = [];
+        for (let i = 0; i < 16; i += 1) {
+          const angle = i * Math.PI / 8;
+          const distance = size * (i % 2 ? 0.23 : 0.75 + (i % 4 === 0 ? 0.35 : 0));
+          rays.push([Math.cos(angle) * distance * 1.2, Math.sin(angle) * distance]);
+        }
+        polygon(ctx, rays, effect.color || '#d99c4f');
+        if (!reducedMotion) {
+          circle(ctx, 0, 0, size * 0.28 * remaining, '#fffdf0');
+          for (let i = 0; i < 3; i += 1) {
+            const angle = (i - 1) * 0.65;
+            const start = size * 0.9;
+            const end = size * (1.35 + (1 - remaining) * 0.5);
+            line(ctx, [[Math.cos(angle) * start, Math.sin(angle) * start], [Math.cos(angle) * end, Math.sin(angle) * end]], effect.color || '#d99c4f', effect.heavy ? 3 : 2);
+          }
+        }
+      }
+      ctx.restore();
+      return;
+    }
     const radius = effect.r || effect.radius || 80;
     const expansion = radius * (0.25 + (1 - remaining) * 0.75);
     ctx.save();
     ctx.globalAlpha = remaining * 0.13;
-    circle(ctx, effect.x, effect.y, expansion, effect.color || COLORS.air);
+    ctx.beginPath();
+    ctx.ellipse(effect.x, effect.y, expansion, effect.kind === 'shockwave' ? expansion * 0.42 : expansion, 0, 0, Math.PI * 2);
+    ctx.fillStyle = effect.color || COLORS.air;
+    ctx.fill();
     ctx.globalAlpha = remaining * 0.85;
     ctx.strokeStyle = effect.color || COLORS.air;
     ctx.lineWidth = remaining * 5 + 1;
@@ -768,7 +996,11 @@ export class Renderer {
     ctx.ellipse(effect.x, effect.y, expansion, effect.kind === 'shockwave' ? expansion * 0.42 : expansion, 0, 0, Math.PI * 2);
     ctx.stroke();
     ctx.globalAlpha = remaining * 0.5;
-    circle(ctx, effect.x, effect.y, expansion * 0.8, null, '#fffbea', 2);
+    ctx.beginPath();
+    ctx.ellipse(effect.x, effect.y, expansion * 0.8, expansion * (effect.kind === 'shockwave' ? 0.33 : 0.8), 0, 0, Math.PI * 2);
+    ctx.strokeStyle = '#fffbea';
+    ctx.lineWidth = 2;
+    ctx.stroke();
     ctx.restore();
   }
 

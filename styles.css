@@ -81,6 +81,8 @@ select:disabled { opacity: .6; }
 .round-hud > span:last-child { display: none; font-size: 10px; color: #b6c5bc; }
 .run-hud { display: flex; gap: 34px; justify-content: flex-end; text-align: right; }
 .run-hud > div { display: flex; flex-direction: column; gap: 7px; }
+.score-hud { position: relative; }
+.hit-streak { position: absolute; top: calc(100% + 3px); right: 0; white-space: nowrap; color: var(--health); font-size: 8px; font-weight: 750; letter-spacing: 1px; }
 .hud-caption { font-size: 8px; font-weight: 600; letter-spacing: 1.5px; color: #b6c5bc; }
 .run-hud strong { font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: 1px; }
 #lives-value { color: var(--health); font-size: 13px; }

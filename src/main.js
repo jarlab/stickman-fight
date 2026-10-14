@@ -304,7 +304,8 @@ function updateHud() {
   const element = ELEMENTS[p.element];
   const shotReadiness = abilityReadiness(p, 'special', element.specialCost);
   const burstReadiness = abilityReadiness(p, 'burst', element.burstCost);
-  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, s.arena, s.objective, shotReadiness, burstReadiness].join('|');
+  const hitStreak = s.combo >= 2 && s.comboTimer > 0 && s.status !== 'ready' ? s.combo : 0;
+  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, s.arena, s.objective, shotReadiness, burstReadiness, hitStreak].join('|');
   if (signature !== hudSignature) {
     hudSignature = signature;
     updateMeter('health', p.hp, p.maxHp);
@@ -321,6 +322,9 @@ function updateHud() {
     $('lives-value').textContent = lives === Infinity ? '∞' : lives ? Array(lives).fill('●').join(' ') : '—';
     $('lives-value').setAttribute('aria-label', `${lives === Infinity ? 'Unlimited' : lives} lives`);
     $('score-value').textContent = String(s.score).padStart(5, '0');
+    $('combo-value').hidden = !hitStreak;
+    $('combo-value').textContent = `${hitStreak} HITS`;
+    $('combo-value').setAttribute('aria-label', `${hitStreak} confirmed hits`);
     $('arena-name').textContent = ARENAS[s.arena].name.toUpperCase();
     $('weapon-label').textContent = p.weapon ? `${p.weapon.toUpperCase()} · ${p.weaponHits} HITS · U THROW / E DROP` : 'UNARMED · E PICK UP / DRINK';
   }
@@ -360,16 +364,47 @@ function tone(from, to, length, volume = .02, type = 'sine') {
   oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
 }
 
+function impactSound(impact) {
+  const strength = Math.max(.6, Math.min(1.5, Number.isFinite(impact.strength) ? impact.strength : 1));
+  if (impact.kind === 'parry') {
+    tone(1350, 1900, .12, .03, 'sine');
+    tone(2100, 2600, .18, .012, 'sine');
+  } else if (impact.kind === 'block') {
+    tone(340, 100, .07, .025 * strength, 'triangle');
+  } else if (impact.kind === 'land') {
+    tone(95, 34, .13, (impact.heavy ? .035 : .018) * strength, 'sine');
+  } else if (impact.heavy) {
+    tone(95, 32, .18, .045 * strength, 'sine');
+    tone(230, 65, .09, .022 * strength, 'triangle');
+  } else {
+    const pitch = { air: 340, water: 220, earth: 150, fire: 270 }[impact.element] || 240;
+    tone(pitch, 65, .075, .035 * strength, 'triangle');
+  }
+}
+
+function pickImpact(state, afterId) {
+  const priority = (impact) => impact.kind === 'parry' ? 5 : impact.kind === 'hit' && impact.heavy ? 4 : impact.kind === 'land' ? 3 : impact.kind === 'block' ? 1 : 2;
+  let chosen = null;
+  const events = Array.isArray(state.impacts) ? state.impacts : [];
+  for (const event of [...events, state.lastImpact]) {
+    if (!event || event.id <= (afterId ?? 0)) continue;
+    if (!chosen || priority(event) > priority(chosen) || (priority(event) === priority(chosen) && event.id > chosen.id)) chosen = event;
+  }
+  return chosen;
+}
+
 function updateAudio() {
   const s = game.state;
   if (!s.player) return;
-  const current = { hp: s.player.hp, lives: s.lives, kills: s.kills, attack: s.player.attackTimer, energy: s.player.energy, wave: s.wave };
-  if (audioSnapshot && s.status === 'playing') {
+  const impactId = Math.max(s.lastImpact?.id ?? 0, s.impacts?.at(-1)?.id ?? 0);
+  const current = { hp: s.player.hp, lives: s.lives, kills: s.kills, energy: s.player.energy, wave: s.wave, impactId };
+  if (audioSnapshot && ['playing', 'won', 'lost'].includes(s.status)) {
+    const impact = pickImpact(s, audioSnapshot.impactId);
+    if (impact) impactSound(impact);
     if (current.lives < audioSnapshot.lives) tone(160, 40, .25, .04, 'triangle');
-    else if (current.hp < audioSnapshot.hp) tone(130, 45, .12, .035, 'triangle');
-    else if (current.kills > audioSnapshot.kills) tone(460, 800, .12, .025);
-    else if (current.energy < audioSnapshot.energy - 5) tone(280, 700, .16, .02, 'triangle');
-    else if (current.attack > audioSnapshot.attack + .05) tone(180, 65, .07, .015, 'triangle');
+    else if (!impact && current.hp < audioSnapshot.hp) tone(130, 45, .12, .035, 'triangle');
+    else if (!impact && current.kills > audioSnapshot.kills) tone(460, 800, .12, .025);
+    else if (!impact && current.energy < audioSnapshot.energy - 5) tone(280, 700, .16, .02, 'triangle');
     if (current.wave > audioSnapshot.wave) tone(420, 630, .25, .02);
   }
   audioSnapshot = current;
