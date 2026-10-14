@@ -60,6 +60,8 @@ All modes, classes, arenas and difficulties are available immediately.
 
 Normal runs have three lives and no time limit. Easy/normal/hard adjust enemy strength and aggression. Bosses gain a second phase below half health. A cleared wave restores some health and energy.
 
+Enemies line up with your lane before striking, move around blocked approaches, and spread to both sides when there is room. Easy, Normal and Hard allow one, two and three simultaneous attack commitments respectively; waiting fighters reposition and rotate into the fight. Dodging through depth leaves a committed attack open to punishment. Air pursues aerial targets, Water favors shots and counters, Earth waits for close punishments, and Fire closes aggressively. Enemies check energy and clear shooting lanes, and wait for you to rise after a knockdown.
+
 Settings, best scores, furthest stages and completed runs save in this browser's local storage by mode/difficulty. Active fights restart after reload. Optional synthesized sound distinguishes landed hits, heavy impacts, blocks, parries and landings; all art is drawn in code.
 
 ## Development
@@ -69,7 +71,8 @@ npm test       # Node gameplay tests
 npm run check  # JavaScript syntax checks
 ```
 
-- `src/engine.js`: combat, AI, waves, pickups, lives and modes.
+- `src/engine.js`: combat, waves, pickups, lives and modes.
+- `src/enemy-ai.js`: enemy approach, crowd spacing, reactions and attack selection.
 - `src/physics.js`: ground-plane movement, bounds and jump height.
 - `src/data.js`: classes, arenas and balance values.
 - `src/renderer.js`: Canvas scenes, fighters and effects.
@@ -80,3 +83,5 @@ npm run check  # JavaScript syntax checks
 The initial platform-arena direction was replaced with LF2-style depth movement at the user's request. There are no floating platforms, wall climbs or ring-outs in this version. Original artwork and characters are used; the supplied LF2 Windows executable is not required to play.
 
 The [LF2 combat investigation](docs/lf2-combat-investigation.md) records the extracted character-data findings, REA/Ghidra evidence and the adaptations made here. Original LF2 assets and analysis tools are excluded from the game source.
+
+The [LF2 enemy AI investigation](docs/lf2-ai-investigation.md) records native targeting, spacing, attack and defense findings. Surrounding positions and coordinated attack turns are original adaptations for Fourfold, rather than claims of a recovered LF2 formation system.

@@ -1,5 +1,6 @@
 import { ELEMENTS, COMBAT, ARENAS, MODES, DIFFICULTIES } from './data.js';
 import { GRAVITY, clamp, moveFighter } from './physics.js';
+import { EnemyAI } from './enemy-ai.js';
 
 const elements = Object.keys(ELEMENTS);
 const COMBAT_TICK = 1 / 30;
@@ -18,6 +19,7 @@ export class Game {
     this.seed = config.seed ?? 61721;
     this.nextId = 0;
     this.difficulty = DIFFICULTIES[settings.difficulty];
+    this.enemyAI = new EnemyAI();
     this.state = {
       settings, status: 'ready', time: 0, wave: 0, kills: 0, score: 0,
       lives: settings.mode === 'challenge' ? 1 : 3,
@@ -156,6 +158,7 @@ export class Game {
     this.updateVisuals(step);
 
     this.updateFighter(s.player, input, step);
+    this.enemyAI.update(this, step);
     for (const e of s.enemies) {
       if (e.dead || e.hp <= 0) continue;
       this.updateFighter(e, e.hitLag > 0 ? {} : this.enemyInput(e), step);
@@ -716,7 +719,6 @@ export class Game {
     const input = {};
     if (e.stun > 0 || e.knockdown > 0 || e.frozen > 0) return input;
     const boss = e.type === 'boss';
-    if (!e.action) e.facing = dx >= 0 ? 1 : -1;
     if (boss && e.hp < e.maxHp * 0.5 && e.bossPhase === 1) {
       e.bossPhase = 2;
       e.energy = 100;
@@ -725,42 +727,11 @@ export class Game {
       this.effect(e.x, e.y - 50, ELEMENTS[e.element].color, 22);
     }
     if (e.type === 'dummy') {
-      if (Math.abs(dx) < 100 && Math.abs(lane) < 30 && e.aiTimer <= 0) { input.attack = true; e.aiTimer = 2.2; }
+      if (!e.action) e.facing = dx >= 0 ? 1 : -1;
+      if (!p.dead && p.hp > 0 && p.knockdown <= 0 && Math.abs(dx) < 100 && Math.abs(lane) < 30 && e.aiTimer <= 0) { input.attack = true; e.aiTimer = 2.2; }
       return input;
     }
-    // Opponents form a loose crowd around the player's lane rather than
-    // overlapping into one indistinguishable stack. Their attacks stay committed.
-    const flank = (e.id % 3 - 1) * 14;
-    const laneGap = lane + flank;
-    const approachRange = { air: 72, water: 86, earth: 61, fire: 48 }[e.element];
-    if (!e.action) {
-      input.up = laneGap < -10;
-      input.down = laneGap > 10;
-      if (Math.abs(dx) > (boss ? approachRange + 25 : approachRange)) {
-        input.left = dx < 0;
-        input.right = dx > 0;
-      }
-      input.run = Math.abs(dx) > 360 && Math.abs(lane) < 45;
-      if (p.z > 75 && Math.abs(dx) < 150 && Math.abs(lane) < 35 && e.grounded && e.jumpTimer <= 0) input.jump = true;
-    }
-    // Follow-ups commit to the same lane. Stepping around a combo leaves its
-    // recovery open; opponents do not swivel an active attack to track you.
-    if (e.action?.kind === 'melee' && e.action.connected && !e.action.followupQueued && e.comboIndex !== 3 &&
-        e.comboCount < (this.state.settings.difficulty === 'easy' && !boss ? 2 : 4) &&
-        e.action.t >= e.action.duration - .1 && Math.abs(lane) < 30 && Math.abs(dx) < 145) {
-      input.attack = true;
-      e.action.followupQueued = true;
-      e.aiTimer = .65 * this.difficulty.aggression;
-    }
-    if (e.aiTimer <= 0 && !e.action) {
-      const distance = Math.hypot(dx, lane * 1.4);
-      if (boss && distance < 300 && e.energy >= 50 && e.cooldowns.burst <= 0) input.burst = true;
-      else if (Math.abs(dx) < (boss ? 115 : 92) && Math.abs(lane) < 28 && Math.abs(p.z - e.z) < 70) input.attack = true;
-      else if (Math.abs(dx) > 130 && Math.abs(dx) < 700 && Math.abs(lane) < 35 && e.cooldowns.special <= 0 && e.energy >= 25) input.special = true;
-      if (input.attack || input.special || input.burst) e.aiTimer = (0.55 + this.random() * 0.65) * this.difficulty.aggression * (e.bossPhase === 2 ? 0.65 : 1);
-    }
-    if (this.state.settings.difficulty === 'hard' && p.action?.kind === 'melee' && Math.abs(dx) < 120 && Math.abs(lane) < 35 && e.aiTimer < 0.5) input.guard = true;
-    return input;
+    return this.enemyAI.input(this, e);
   }
 
   separateFighters(dt) {
