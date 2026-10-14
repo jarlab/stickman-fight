@@ -234,7 +234,7 @@ test('an attack pressed during hit-stop survives the freeze and chains after the
   const { game, player, enemy } = combatFixture();
   game.tick({ attack: true }, STEP);
   until(game, () => game.state.combo === 1, 'the opening punch connects');
-  assert.ok(game.state.hitStop > STEP);
+  assert.ok(player.hitLag > STEP);
   const firstAction = player.action;
   const healthAfterFirstHit = enemy.hp;
   game.tick({ attack: true }, STEP);
@@ -515,7 +515,7 @@ test('holding guard through hit stun does not create a fresh timed parry on reco
   rear.aiTimer = 100;
   advance(game, 0.8, { guard: true });
   game.damage(player, 20, 1, rear);
-  advance(game, 0.36, { guard: true });
+  for (let frame = 0; frame < 120 && (player.invulnerable > 0 || !player.guard); frame++) game.tick({ guard: true }, STEP);
   assert.equal(player.invulnerable, 0);
   assert.equal(player.guard, true);
   const beforeFrontHit = player.hp;
@@ -658,7 +658,7 @@ test('a timed projectile parry reflects the shot back into its attacker', () => 
   const initialEnemyHp = enemy.hp;
   game.tick({ guard: true }, STEP);
   game.shoot(enemy);
-  advance(game, 0.1, { guard: true });
+  for (let frame = 0; frame < 30 && !game.state.projectiles.some(projectile => projectile.team === 'player'); frame++) game.tick({ guard: true }, STEP);
   assert.equal(game.state.player.hp, initialPlayerHp);
   assert.ok(game.state.projectiles.some(projectile => projectile.team === 'player' && projectile.vx > 0));
   advance(game, 0.4, { guard: true });

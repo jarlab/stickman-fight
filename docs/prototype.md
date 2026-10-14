@@ -23,6 +23,8 @@ The HUD shows an active streak from confirmed hits in `combo` while `comboTimer`
 
 `COMBAT` defines each class's three moves with independent windup, active time, recovery, reach, forward step, damage, knockback and stun. Air's Rising wind ends in a launcher for aerial follow-ups. Water's Tidal counter pulls, freezes and rewards parries with an empowered strike. Earth's Mountain breaker gives follow-ups armor and ends in a guard break. Fire's Blazing rush advances aggressively and supports cancels into burning powers. Inputs buffer for 0.24 simulation seconds, including presses captured during hit-stop; simultaneous movement and attack inputs retain both intents. Air can jump-cancel a confirmed hit; Air and Fire can dash-cancel. Grounded recovery follows hard knockdowns, with three airborne hits ending a juggle. Class descriptions appear in the arena footer, including during training.
 
+Contact uses per-fighter `hitLag`, with simultaneous release for melee participants regardless of update order. Movement, action clocks, cooldowns and queued-input expiry pause for those fighters; other fighters and projectiles keep advancing. Projectiles pause only their victim, and a projectile parry does not interrupt its remote caster. `stagger` is independent of health, decays outside hitlag, escalates through flinch/dizzy/knockdown, and clears on knockdown/recovery. Connected moves can add a recovery `followThrough`; whiffs cannot. Earth can spike an airborne target. See `lf2-combat-investigation.md` for native evidence and adaptation limits.
+
 ## Commands and checks
 
 - npm start: Node localhost server 127.0.0.1:5173; no install/build.

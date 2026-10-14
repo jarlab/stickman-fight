@@ -2,6 +2,7 @@ import { ELEMENTS, COMBAT, ARENAS, MODES, DIFFICULTIES } from './data.js';
 import { GRAVITY, clamp, moveFighter } from './physics.js';
 
 const elements = Object.keys(ELEMENTS);
+const COMBAT_TICK = 1 / 30;
 const countdowns = ['invulnerable', 'stun', 'parryTimer', 'parryCooldown', 'dashTime', 'slow', 'burn', 'attackTimer', 'tell', 'aiTimer', 'jumpTimer', 'comboTimer', 'hitReact', 'frozen', 'counterReady'];
 const stories = ['The wind has gone silent.', 'The harbor has frozen over.', 'The stone guardians have awakened.', 'One final flame. Restore the balance.'];
 
@@ -21,7 +22,7 @@ export class Game {
       lives: settings.mode === 'challenge' ? 1 : 3,
       player: null, enemies: [], projectiles: [], particles: [], effects: [],
       floaters: [], corpses: [], weapons: [],
-      arena: settings.arena, shake: 0, slowMotion: 0, hitStop: 0,
+      arena: settings.arena, shake: 0, slowMotion: 0,
       banner: 'Find your element', bannerTime: 0, objective: MODES[settings.mode].objective,
       waveDelay: -1, weaponTimer: 10, combo: 0, comboTimer: 0, lastImpact: null, impacts: [],
     };
@@ -50,6 +51,7 @@ export class Game {
       dashTime: 0, dashUsed: false, slow: 0, burn: 0, jumpTimer: 0, burnTick: 0,
       comboIndex: 0, comboTimer: 0, running: false, knockdown: 0,
       buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0,
+      hitLag: 0, hitLagAt: -1, stagger: 0,
       hitReact: 0, hitMax: 0, hitDirection: 1, hitStrength: 0, hitType: 'stagger',
     };
   }
@@ -69,7 +71,7 @@ export class Game {
   placePlayer() {
     const s = this.state;
     Object.assign(s.player, { x: 590, y: 555, depth: 555, z: 0, vDepth: 0, vx: 0, vy: 0, grounded: true, jumps: 0, dashUsed: false, dashTime: 0, stun: 0, burn: 0, slow: 0, action: null, guard: false, parryTimer: 0, attackTimer: 0, tell: 0, knockdown: 0, comboIndex: 0, comboTimer: 0 });
-    Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false });
+    Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false, hitLag: 0, stagger: 0 });
   }
 
   spawnEnemy({ boss = false, dummy = false, element, x, y, depth } = {}) {
@@ -134,25 +136,22 @@ export class Game {
   tick(input = {}, dt = 1 / 120) {
     const s = this.state;
     if (s.status !== 'playing' || !Number.isFinite(dt) || dt <= 0) return;
-    // Capture presses before hit-stop: the browser consumes each edge once,
-    // including the frames on which simulation is deliberately frozen.
+    // Capture edges even while this fighter is held in a contact pose.
     this.bufferInput(s.player, input);
     dt = Math.min(dt, 1 / 30);
     s.time += dt;
     s.shake = Math.max(0, s.shake - dt * 24);
     s.slowMotion = Math.max(0, s.slowMotion - dt);
-    s.hitStop = Math.max(0, s.hitStop - dt);
     const step = s.slowMotion > 0 ? dt * 0.5 : dt;
     s.bannerTime = Math.max(0, s.bannerTime - dt);
     s.comboTimer = Math.max(0, s.comboTimer - dt);
     if (!s.comboTimer) s.combo = 0;
     this.updateVisuals(step);
-    if (s.hitStop > 0) return;
 
     this.updateFighter(s.player, input, step);
     for (const e of s.enemies) {
       if (e.dead || e.hp <= 0) continue;
-      this.updateFighter(e, this.enemyInput(e), step);
+      this.updateFighter(e, e.hitLag > 0 ? {} : this.enemyInput(e), step);
     }
     this.separateFighters(step);
     this.updateProjectiles(step);
@@ -183,14 +182,24 @@ export class Game {
 
   updateFighter(f, input, dt) {
     if (f.dead) return;
+    // LF2 holds participants, including their physics and action clocks.
+    // Projectiles and the rest of the crowd continue on the world clock.
+    if (f.hitLag > 0) {
+      // A contact earlier in this same tick must not shorten the victim's hold
+      // simply because its update comes after the attacker's in the array.
+      if (f.hitLagAt !== this.state.time) f.hitLag = Math.max(0, f.hitLag - dt);
+      f.hitLagAt = this.state.time;
+      return;
+    }
     const spec = ELEMENTS[f.element];
+    f.stagger = Math.max(0, f.stagger - dt * 30);
     for (const key of countdowns) f[key] = Math.max(0, (f[key] || 0) - dt);
     for (const key of Object.keys(f.cooldowns)) f.cooldowns[key] = Math.max(0, f.cooldowns[key] - dt);
     if (f.team === 'enemy') this.bufferInput(f, input);
     if (f.buffer && (f.buffer.ttl -= dt) <= 0) f.buffer = null;
     if (f.knockdown > 0 && f.grounded) {
       f.knockdown = Math.max(0, f.knockdown - dt);
-      if (!f.knockdown) { f.invulnerable = Math.max(f.invulnerable, .28); f.juggle = 0; }
+      if (!f.knockdown) { f.invulnerable = Math.max(f.invulnerable, .28); f.juggle = 0; f.stagger = 0; }
     }
     f.armor = !!(f.action?.move?.armor && f.action.t < f.action.activeUntil && f.grounded);
     f.energy = Math.min(f.maxEnergy, f.energy + dt * (f.guard ? 2 : f.team === 'player' ? 14 : 18));
@@ -243,8 +252,13 @@ export class Game {
 
     if (f.action) {
       const action = f.action;
+      const previousTime = action.t;
       action.t += dt;
       if (action.move && action.t <= action.activeUntil) f.x += f.facing * action.move.step * dt / action.activeUntil;
+      if (action.connected && action.move?.followThrough && action.t > action.activeUntil) {
+        const recoveryTime = Math.min(action.t, action.duration) - Math.max(previousTime, action.activeUntil);
+        f.x += f.facing * action.move.followThrough * recoveryTime / action.move.recovery;
+      }
       if (action.kind === 'melee' && action.t >= action.windup && action.t <= action.activeUntil) {
         action.done = true;
         this.melee(f);
@@ -255,6 +269,10 @@ export class Game {
         else this.burst(f);
       }
       if (f.action && action.t >= action.duration) this.endAction(f);
+    }
+    if (f.hitLag > 0) {
+      f.x = clamp(f.x, 30 + f.w / 2, 1250 - f.w / 2);
+      return;
     }
     if (f.dashTime <= 0) {
       f.vy += GRAVITY * dt;
@@ -377,7 +395,7 @@ export class Game {
     if (f.team === 'enemy') windup = (kind === 'melee' ? windup + .16 : kind === 'burst' ? .85 : .55) * this.difficulty.aggression;
     const activeUntil = windup + (move?.active ?? .07);
     const duration = activeUntil + (move?.recovery ?? (kind === 'burst' ? .23 : .1));
-    f.action = { kind, t: 0, windup, activeUntil, duration, chainAt: activeUntil + .015, done: false, connected: false, hitIds: [], move, weapon: f.weapon };
+    f.action = { kind, t: 0, windup, activeUntil, duration, chainAt: activeUntil + COMBAT_TICK, done: false, connected: false, hitIds: [], move, weapon: f.weapon };
     f.cooldowns[key] = basic ? duration : spec[`${kind}Cooldown`];
     f.armor = !!move?.armor && f.grounded;
     if (kind === 'melee' && f.counterReady > 0) { f.action.counter = true; f.counterReady = 0; }
@@ -406,7 +424,7 @@ export class Game {
           element: f.element, knockdown: running || weapon === 'crate' || move.knockdown,
           heavy, light: !heavy, stun: move.stun, lift: running ? 270 : move.lift,
           launcher: !running && move.launcher, freeze: running ? 0 : action?.counter ? .6 : move.freeze,
-          guardBreak: move.guardBreak,
+          guardBreak: move.guardBreak, contact: true, fall: move.fall, spike: move.spike,
         });
         if (landed && action) { action.connected = true; action.hitIds.push(target.id); }
         if (f.action !== action) return; // A parry interrupts every remaining active frame.
@@ -474,7 +492,7 @@ export class Game {
     const front = target.facing === -direction;
     if (target.guard && front && !options.unblockable) {
       if (target.parryTimer > 0) {
-        if (source && source !== target && source.cooldowns) {
+        if (options.contact && source && source !== target && source.cooldowns) {
           source.stun = .65;
           source.buffer = null;
           this.endAction(source);
@@ -487,7 +505,7 @@ export class Game {
         this.floater(target.x, target.y - target.h - 12, target.element === 'water' ? 'TIDAL COUNTER' : 'PARRY', '#397d77');
         this.effect(target.x, target.y - target.h / 2, '#fffdf0', 18);
         this.impact(target, source, .7, false, 'parry');
-        s.hitStop = Math.max(s.hitStop, .065);
+        this.contactPause(target, options.contact ? source : null, 3);
         if (target.team === 'player') s.score += 25;
         return false;
       }
@@ -517,6 +535,17 @@ export class Game {
     if (target.type === 'boss') knockback *= 0.55;
     const armored = target.armor && !heavy && !guardBroken;
     if (armored) amount *= .6;
+    if (!blocked && !armored) {
+      // Fall pressure is independent of health damage. Bands preserve pressure
+      // between quick hits; backing away lets it drain. Elemental finishers keep
+      // their launch/freeze behavior, and bosses retain their shorter reactions.
+      const pressure = target.stagger + (options.fall ?? 20);
+      target.stagger = pressure > 40 ? 60 : pressure > 20 ? 40 : pressure > 0 ? 20 : 0;
+      if (pressure > 60 && !options.launcher && !options.freeze && target.type !== 'boss') {
+        options = { ...options, knockdown: true };
+        heavy = true;
+      }
+    }
     target.hp = Math.max(0, target.hp - amount);
     target.invulnerable = target.team === 'player' ? .28 : .075;
     if (!armored) {
@@ -525,14 +554,19 @@ export class Game {
       const airborne = target.z > 20;
       if (!blocked && (options.launcher || airborne)) target.juggle++;
       const knockedDown = !blocked && target.type !== 'boss' && (options.knockdown || shatter || target.juggle >= 3);
-      const lift = blocked || (options.freeze && !shatter) ? 0 : shatter ? 270 : options.lift ?? (options.light ? (airborne ? 160 : 0) : 190 + Math.abs(knockback) * .12);
+      const dizzy = !blocked && !knockedDown && !options.launcher && !options.freeze && target.stagger >= 60;
+      const lift = blocked || (options.freeze && !shatter) ? 0 : shatter ? 270 : options.lift ?? (knockedDown ? 220 : options.light ? (airborne ? 160 : 0) : 190 + Math.abs(knockback) * .12);
       if (lift > 0) { target.vy = -lift; target.grounded = false; }
-      const stun = blocked ? .1 : guardBroken ? .65 : options.stun ?? (options.element === 'earth' ? .35 : .24);
+      if (!blocked && airborne && options.spike) target.vy = options.spike;
+      const stun = blocked ? .1 : guardBroken || dizzy ? .65 : options.stun ?? 7 * COMBAT_TICK;
       target.stun = Math.max(target.stun, target.type === 'boss' && !guardBroken ? Math.min(stun, .28) : stun);
       if (knockedDown) {
         // Recovery starts on the floor, so a launched fighter never gets up midair.
         target.knockdown = .55;
+        target.stagger = 0;
         if (!shatter) this.floater(target.x, target.y - target.h - 14, 'KNOCKDOWN', '#7b6554');
+      } else if (dizzy && target.type !== 'boss') {
+        this.floater(target.x, target.y - target.h - 14, 'STAGGER', '#9a7935');
       }
       if (!blocked && options.freeze && !shatter && !knockedDown) {
         target.frozen = target.type === 'boss' ? options.freeze * .45 : options.freeze;
@@ -544,7 +578,7 @@ export class Game {
       Object.assign(target, {
         hitReact: react, hitMax: react, hitDirection: direction,
         hitStrength: heavy ? 1 : blocked ? .25 : .55,
-        hitType: target.frozen > 0 ? 'freeze' : knockedDown ? 'slam' : options.launcher ? 'launch' : 'stagger',
+        hitType: target.frozen > 0 ? 'freeze' : knockedDown ? 'slam' : options.launcher ? 'launch' : dizzy || guardBroken ? 'dizzy' : 'stagger',
       });
       if (!blocked) {
         target.guard = false;
@@ -562,8 +596,17 @@ export class Game {
     this.floater(target.x, target.y - target.h, `${Math.ceil(amount)}`, ELEMENTS[source?.element || target.element].color);
     this.effect(target.x, target.y - target.h / 2, ELEMENTS[target.element].color, heavy ? 18 : 7);
     this.impact(target, source, blocked || armored ? .3 : heavy ? 1 : .55, heavy && !blocked, blocked || armored ? 'block' : 'hit');
-    s.hitStop = Math.max(s.hitStop, blocked || armored ? .025 : heavy ? .075 : .038);
+    this.contactPause(target, options.contact ? source : null, blocked || armored ? 5 : 3);
     return true;
+  }
+
+  contactPause(target, source, victimTicks) {
+    target.hitLag = Math.max(target.hitLag, victimTicks * COMBAT_TICK);
+    target.hitLagAt = this.state.time;
+    if (source && source !== target) {
+      source.hitLag = Math.max(source.hitLag, 3 * COMBAT_TICK);
+      source.hitLagAt = this.state.time;
+    }
   }
 
   impact(target, source, strength, heavy, kind = 'hit') {
@@ -672,8 +715,8 @@ export class Game {
       const distance = (a.w + b.w) / 2;
       if (Math.abs(dx) < distance) {
         const push = Math.sign(dx || (b.id - a.id)) * (distance - Math.abs(dx)) * Math.min(0.25, dt * 8);
-        a.x -= push;
-        b.x += push;
+        if (a.hitLag <= 0 && a.hitLagAt !== this.state.time) a.x -= push;
+        if (b.hitLag <= 0 && b.hitLagAt !== this.state.time) b.x += push;
       }
     }
   }

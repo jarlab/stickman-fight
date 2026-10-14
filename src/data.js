@@ -8,29 +8,30 @@ export const ELEMENTS = {
   fire: { name: 'Fire', title: 'The spark', color: '#c5573f', description: 'Advance with every strike. Finish with a blazing rush and cancel into flames.', special: 'Ember fan', burst: 'Flare nova', speed: 325, hp: 105, damage: 18, knockback: 380, specialCost: 18, specialCooldown: 0.46, burstCost: 50, burstCooldown: 5.5 },
 };
 
-// Seconds and world units. A move owns its timing, reach, advance and reaction;
-// a shared damage multiplier alone cannot give four fighters distinct rhythms.
+// Frame rhythms adapted from the LF2 investigation; simulation stays at 120 Hz.
+// These are original moves, scaled for our arena, not imported character data.
+const tick = 1 / 30;
 const strike = (windup, active, recovery, reach, step, damage, knockback, stun, extra = {}) => ({ windup, active, recovery, reach, step, damage, knockback, stun, ...extra });
 export const COMBAT = {
   air: { name: 'Rising wind', steps: [
-    strike(.055, .07, .16, 84, 9, .85, 65, .30),
-    strike(.065, .08, .16, 93, 12, .95, 80, .33),
-    strike(.10, .10, .22, 106, 18, 1.3, 175, .55, { lift: 560, launcher: true }),
+    strike(2*tick, 2*tick, 4*tick, 84, 7, .85, 60, .30, { followThrough: 8, fall: 20 }),
+    strike(2*tick, 2*tick, 4*tick, 93, 9, .95, 65, .33, { followThrough: 9, fall: 20 }),
+    strike(3*tick, 3*tick, 7*tick, 106, 18, 1.3, 155, .55, { lift: 560, launcher: true, fall: 25 }),
   ] },
   water: { name: 'Tidal counter', steps: [
-    strike(.075, .09, .18, 96, 6, .9, 60, .35),
-    strike(.085, .10, .18, 108, 7, 1, -105, .39),
-    strike(.13, .10, .22, 116, 12, 1.3, 160, .65, { freeze: .8 }),
+    strike(3*tick, 3*tick, 4*tick, 96, 6, .9, 55, .35, { followThrough: 4, fall: 20 }),
+    strike(3*tick, 3*tick, 4*tick, 108, 7, 1, -105, .39, { followThrough: 3, fall: 20 }),
+    strike(4*tick, 3*tick, 7*tick, 116, 12, 1.3, 160, .65, { freeze: .8, fall: 20 }),
   ] },
   earth: { name: 'Mountain breaker', steps: [
-    strike(.115, .09, .18, 90, 7, .9, 75, .43),
-    strike(.15, .10, .20, 100, 9, 1.1, 95, .49, { armor: true }),
-    strike(.22, .11, .28, 120, 16, 1.65, 820, .65, { armor: true, knockdown: true, guardBreak: true, lift: 330 }),
+    strike(5*tick, 2*tick, 5*tick, 90, 7, .9, 65, .43, { followThrough: 4, fall: 25 }),
+    strike(6*tick, 3*tick, 6*tick, 100, 9, 1.1, 75, .49, { armor: true, followThrough: 5, fall: 25 }),
+    strike(7*tick, 3*tick, 9*tick, 120, 16, 1.65, 720, .65, { armor: true, knockdown: true, guardBreak: true, lift: 270, spike: 480, fall: 70 }),
   ] },
   fire: { name: 'Blazing rush', steps: [
-    strike(.05, .07, .15, 80, 14, .85, 100, .31),
-    strike(.065, .08, .16, 92, 19, 1, 120, .34),
-    strike(.11, .10, .23, 108, 34, 1.5, 650, .55, { knockdown: true, lift: 270 }),
+    strike(2*tick, 3*tick, 4*tick, 80, 12, .85, 65, .31, { followThrough: 10, fall: 20 }),
+    strike(2*tick, 3*tick, 4*tick, 92, 16, 1, 75, .34, { followThrough: 12, fall: 20 }),
+    strike(4*tick, 3*tick, 7*tick, 108, 34, 1.5, 650, .55, { knockdown: true, lift: 210, fall: 70 }),
   ] },
 };
 

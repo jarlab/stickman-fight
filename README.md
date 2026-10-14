@@ -37,11 +37,13 @@ Open **http://127.0.0.1:5173** in a desktop browser. No `npm install`, game edit
 
 Tap **J** to build a chain: one early input can buffer during an attack. After a melee hit connects, **K** or **L** can cancel its recovery into an elemental power if you have enough energy and the power is ready. A missed swing still needs to recover. The small hit streak beside your score counts confirmed hits and expires after a pause in contact.
 
+Contact briefly holds the two fighters while the surrounding crowd keeps moving. Quick, connected jabs build stagger pressure and step forward during recovery; leaving a gap lets pressure drain. Sustained pressure can make an opponent dizzy, then knock them down. Projectiles hold their victim without stopping the caster.
+
 ## Fighters
 
 - **Air / The wanderer — Rising wind:** quick palms finish in a rising kick that launches the opponent. Jump after contact to follow up in the air. Wind bolts and a cyclone control crowds.
 - **Water / The tidekeeper — Tidal counter:** the chain draws opponents close and ends in a freeze; strike frozen enemies to shatter them. A successful parry empowers the next strike. Ice shards and a healing tide support this counterattacking style.
-- **Earth / The sentinel — Mountain breaker:** deliberate, planted blows gain armor on the follow-ups and finish with a guard-breaking slam. Boulders and seismic slams punish opponents who stay in range.
+- **Earth / The sentinel — Mountain breaker:** deliberate, planted blows gain armor on the follow-ups and finish with a guard-breaking slam that spikes airborne opponents down. Boulders and seismic slams punish opponents who stay in range.
 - **Fire / The spark — Blazing rush:** each fast strike advances, ending in a forceful rush. Cancel a confirmed hit into an ember volley or flare nova to maintain pressure and burn opponents.
 
 ## Modes
@@ -73,3 +75,5 @@ npm run check  # JavaScript syntax checks
 - `server.mjs`: localhost static server.
 
 The initial platform-arena direction was replaced with LF2-style depth movement at the user's request. There are no floating platforms, wall climbs or ring-outs in this version. Original artwork and characters are used; the supplied LF2 Windows executable is not required to play.
+
+The [LF2 combat investigation](docs/lf2-combat-investigation.md) records the extracted character-data findings, REA/Ghidra evidence and the adaptations made here. Original LF2 assets and analysis tools are excluded from the game source.

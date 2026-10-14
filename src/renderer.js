@@ -162,7 +162,17 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
   const recoil = hitRatio ** 0.65 * (0.5 + strength * 0.5);
   const hitDirection = (fighter.hitDirection || -(fighter.facing || 1)) * (fighter.facing < 0 ? -1 : 1);
   if (fighter.stun > 0 && !frozen) {
-    pose = blendPose(pose, poseWith(rest, { lean: -8, drop: 4, elbow: [10, -33], hand: [20, -28] }), 0.7 * (1 - recoil));
+    const recovering = smooth(fighter.stun / 0.12);
+    if (fighter.hitType === 'dizzy') {
+      const hunched = poseWith(rest, {
+        lean: 11, drop: 8, head: [16, -43], shoulder: [11, -36],
+        rearElbow: [-5, -24], rearHand: [3, -15], elbow: [20, -24], hand: [19, -13],
+        rearKnee: [-11, -13], frontKnee: [11, -12], rearFoot: [-16, -1], frontFoot: [17, -1],
+      });
+      pose = blendPose(pose, hunched, 0.95 * recovering * (1 - recoil));
+    } else {
+      pose = blendPose(pose, poseWith(rest, { lean: -5, drop: 2, elbow: [10, -33], hand: [20, -28] }), 0.5 * recovering * (1 - recoil));
+    }
   }
   if (recoil > 0) {
     const compression = (fighter.hitType === 'slam' ? 13 : fighter.hitType === 'launch' ? -3 : 6) * recoil;
@@ -600,27 +610,32 @@ export class Renderer {
     const color = elementColor(fighter.element);
     const facing = fighter.facing < 0 ? -1 : 1;
     const previous = this.fighterAnimations.get(fighter);
+    const hitLag = (fighter.hitLag || 0) > 0;
+    // Action timers pause in the simulation; this clock also holds idle motion,
+    // cloth and status effects for the participants without freezing the arena.
+    const visualTime = previous ? previous.visualTime + (hitLag ? 0 : Math.max(0, time - previous.time)) : time;
     const sameAction = previous?.action === fighter.action;
     const transitionFrom = sameAction ? previous?.transitionFrom : fighter.action && previous?.action && time - previous.time < 0.15 ? previous.pose : null;
-    const { pose, stroke, style, recoil, speed } = fighterPose(fighter, time, reducedMotion, transitionFrom);
-    this.fighterAnimations.set(fighter, { action: fighter.action, time, pose, transitionFrom });
+    const { pose, stroke, style, recoil, speed } = fighterPose(fighter, visualTime, reducedMotion, transitionFrom);
+    this.fighterAnimations.set(fighter, { action: fighter.action, time, visualTime, pose, transitionFrom });
     const guarding = Boolean(fighter.guard);
-    const stunned = (fighter.stun || 0) > 0;
+    const dizzy = (fighter.stun || 0) > 0 && fighter.hitType === 'dizzy';
     const frozen = (fighter.frozen || 0) > 0;
     const isBoss = fighter.type === 'boss';
     const isPlayer = fighter.team === 'player';
     const hitAge = (fighter.hitMax || 0.35) - (fighter.hitReact || 0);
     const flash = !reducedMotion && fighter.hitReact > 0 && hitAge < 0.045;
     const bodyColor = flash ? '#fffdf1' : color;
-    const flutter = reducedMotion || frozen ? 0 : time;
+    const flutter = reducedMotion || frozen ? 0 : visualTime;
+    const contactShake = !reducedMotion && hitLag && fighter.hitReact > 0 ? (Math.floor(time * 30) % 2 ? 2 : -2) : 0;
 
-    this.drawLaunchTrail(fighter, time, reducedMotion);
+    this.drawLaunchTrail(fighter, visualTime, reducedMotion);
 
     if ((fighter.knockdown || 0) > 0) {
       const airborne = (fighter.z || 0) > 4;
       const prone = airborne ? 1 : smooth(fighter.knockdown / 0.18);
-      const rotation = airborne ? Math.PI * 0.38 * (fighter.hitDirection || facing) + (reducedMotion ? 0 : Math.sin(time * 9) * 0.18) : Math.PI / 2 * facing * prone;
-      this.drawCorpse({ ...fighter, x: fighter.x - (airborne ? 0 : facing * 13 * prone), y: fighter.y - 8 - 7 * prone, rotation, life: 1 });
+      const rotation = airborne ? Math.PI * 0.38 * (fighter.hitDirection || facing) + (reducedMotion ? 0 : Math.sin(visualTime * 9) * 0.18) : Math.PI / 2 * facing * prone;
+      this.drawCorpse({ ...fighter, x: fighter.x + contactShake - (airborne ? 0 : facing * 13 * prone), y: fighter.y - 8 - 7 * prone, rotation, life: 1 });
       if (isPlayer) polygon(ctx, [[fighter.x - 5, fighter.y - 36], [fighter.x + 5, fighter.y - 36], [fighter.x, fighter.y - 30]], color, INK, 1);
       this.drawFighterHealth(fighter, airborne ? h : 28);
       return;
@@ -629,7 +644,7 @@ export class Renderer {
     ctx.save();
 
     if (fighter.tell && !isPlayer) {
-      ctx.globalAlpha = reducedMotion ? 0.24 : 0.3 + Math.sin(time * 16) * 0.12;
+      ctx.globalAlpha = reducedMotion ? 0.24 : 0.3 + Math.sin(visualTime * 16) * 0.12;
       circle(ctx, fighter.x, fighter.y - h * 0.52, h * 0.68, '#f3a863', '#ba522e', 2);
       ctx.globalAlpha = 1;
       ctx.fillStyle = '#a53b25';
@@ -678,9 +693,9 @@ export class Renderer {
       ctx.restore();
     }
 
-    ctx.translate(fighter.x, fighter.y);
+    ctx.translate(fighter.x + contactShake, fighter.y);
     ctx.scale(scale * facing, scale);
-    if ((fighter.invulnerable || 0) > 0) ctx.globalAlpha = reducedMotion ? 0.8 : 0.74 + Math.sin(time * 18) * 0.1;
+    if ((fighter.invulnerable || 0) > 0) ctx.globalAlpha = reducedMotion ? 0.8 : 0.74 + Math.sin(visualTime * 18) * 0.1;
     const { hip, shoulder, head, rearFoot, frontFoot, rearKnee, frontKnee, rearElbow, rearHand, elbow, hand } = pose;
     line(ctx, [hip, rearKnee, rearFoot], '#415451', 7);
     line(ctx, [[rearFoot[0] - 2, rearFoot[1]], [rearFoot[0] + 5, rearFoot[1]]], INK, 6);
@@ -743,7 +758,7 @@ export class Renderer {
     }
     if ((fighter.counterReady || 0) > 0) {
       ctx.save();
-      ctx.globalAlpha *= reducedMotion ? 0.8 : 0.7 + Math.sin(time * 9) * 0.2;
+      ctx.globalAlpha *= reducedMotion ? 0.8 : 0.7 + Math.sin(visualTime * 9) * 0.2;
       circle(ctx, hand[0], hand[1], 10, null, '#f9df96', 2.5);
       polygon(ctx, [[hand[0] + 12, hand[1] - 6], [hand[0] + 15, hand[1] - 11], [hand[0] + 18, hand[1] - 6], [hand[0] + 15, hand[1] - 1]], '#d6aa4e');
       ctx.restore();
@@ -764,11 +779,11 @@ export class Renderer {
       ctx.restore();
     }
 
-    if (stunned && !frozen) {
+    if (dizzy && !frozen) {
       ctx.save();
       ctx.fillStyle = '#dfab4d';
       for (let i = 0; i < 3; i += 1) {
-        const angle = (reducedMotion ? 0 : time * 4) + i * 2.1;
+        const angle = (reducedMotion ? 0 : visualTime * 4) + i * 2.1;
         const x = fighter.x + Math.cos(angle) * 17 * scale;
         const y = fighter.y - h - 7 + Math.sin(angle) * 5;
         polygon(ctx, [[x, y - 3], [x + 3, y], [x, y + 3], [x - 3, y]], '#d6a047');
