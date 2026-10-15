@@ -97,6 +97,41 @@ const COMBO_POSES = {
   ],
 };
 
+// Authored silhouettes inspired by circular, yielding, rooted and driving martial movement.
+// Every aerial move names its contact limb so its elemental trail follows the strike.
+const MARTIAL_POSES = {
+  airLift: { trail: 'rise', wind: { lean: -9, drop: 8, elbow: [-10, -23], hand: [-5, -17], rearHand: [15, -43], frontFoot: [20, -1], rearFoot: [-21, -1] },
+    strike: { lean: 6, drop: -3, elbow: [19, -48], hand: [27, -70], rearElbow: [-13, -35], rearHand: [-20, -27], frontKnee: [15, -18], frontFoot: [20, -1], rearFoot: [-20, -1] } },
+  airPalm: { trail: 'palm', wind: { lean: -11, elbow: [-12, -40], hand: [-15, -48], rearElbow: [10, -38], rearHand: [21, -51], frontKnee: [13, -30], frontFoot: [5, -21], rearKnee: [-13, -26], rearFoot: [-21, -13] },
+    strike: { lean: 10, drop: -3, elbow: [28, -43], hand: [45, -42], rearElbow: [-9, -38], rearHand: [-22, -30], frontKnee: [12, -23], frontFoot: [24, -12], rearKnee: [-16, -26], rearFoot: [-26, -16] } },
+  airHeel: { trail: 'wheel', contact: 'frontFoot', wind: { lean: -8, elbow: [12, -43], hand: [20, -52], rearHand: [-22, -42], frontKnee: [-1, -33], frontFoot: [-20, -27], rearKnee: [-12, -22], rearFoot: [-23, -10] },
+    strike: { lean: -12, drop: -2, elbow: [5, -39], hand: [15, -51], rearElbow: [-24, -34], rearHand: [-35, -29], frontKnee: [19, -42], frontFoot: [47, -49], rearKnee: [-11, -23], rearFoot: [-20, -9] } },
+  airDiveHeel: { trail: 'dive', contact: 'frontFoot', wind: { lean: -10, frontKnee: [13, -45], frontFoot: [26, -70], rearKnee: [-11, -22], rearFoot: [-21, -9], hand: [16, -49], rearHand: [-24, -30] },
+    strike: { lean: 12, drop: 4, elbow: [19, -35], hand: [28, -46], rearElbow: [-12, -29], rearHand: [-23, -22], frontKnee: [25, -15], frontFoot: [37, 7], rearKnee: [-12, -22], rearFoot: [-25, -15] } },
+  waterLift: { trail: 'redirect', wind: { lean: -9, drop: 7, elbow: [19, -24], hand: [33, -16], rearElbow: [-16, -32], rearHand: [-5, -45], frontKnee: [17, -12], frontFoot: [25, -1], rearFoot: [-24, -1] },
+    strike: { lean: -3, drop: -2, elbow: [20, -47], hand: [33, -65], rearElbow: [3, -31], rearHand: [20, -36], frontKnee: [16, -14], frontFoot: [24, -1], rearFoot: [-23, -1] } },
+  waterPalm: { trail: 'sweep', wind: { lean: -9, drop: 3, elbow: [-14, -29], hand: [-8, -43], rearElbow: [17, -36], rearHand: [27, -48], frontKnee: [14, -29], frontFoot: [9, -18], rearKnee: [-13, -25], rearFoot: [-23, -12] },
+    strike: { lean: 3, drop: 1, elbow: [24, -34], hand: [43, -37], rearElbow: [9, -28], rearHand: [24, -25], frontKnee: [15, -26], frontFoot: [25, -14], rearKnee: [-14, -24], rearFoot: [-22, -9] } },
+  waterSweep: { trail: 'flow', contact: 'rearHand', wind: { lean: -7, rearElbow: [-15, -42], rearHand: [-4, -58], elbow: [19, -33], hand: [29, -41], frontKnee: [12, -29], frontFoot: [6, -16], rearKnee: [-13, -23], rearFoot: [-22, -8] },
+    strike: { lean: 8, drop: 3, rearElbow: [27, -29], rearHand: [45, -24], elbow: [3, -37], hand: [12, -51], frontKnee: [20, -25], frontFoot: [31, -15], rearKnee: [-15, -22], rearFoot: [-27, -11] } },
+  earthLift: { trail: 'uppercut', angle: -Math.PI / 2, wind: { lean: -3, drop: 10, elbow: [-15, -21], hand: [-6, -28], rearHand: [17, -36], frontKnee: [19, -11], frontFoot: [27, -1], rearKnee: [-18, -12], rearFoot: [-27, -1] },
+    strike: { lean: 8, drop: 1, elbow: [18, -45], hand: [22, -67], rearElbow: [-14, -31], rearHand: [-9, -40], frontKnee: [18, -13], frontFoot: [27, -1], rearKnee: [-17, -13], rearFoot: [-27, -1] } },
+  earthHammer: { trail: 'hammer', angle: Math.PI / 3, wind: { lean: -8, drop: -3, elbow: [-13, -51], hand: [-3, -71], rearElbow: [10, -51], rearHand: [4, -68], frontKnee: [16, -25], frontFoot: [15, -13], rearKnee: [-17, -24], rearFoot: [-23, -12] },
+    strike: { lean: 14, drop: 8, elbow: [25, -28], hand: [40, -16], rearElbow: [15, -31], rearHand: [34, -20], frontKnee: [19, -19], frontFoot: [24, -6], rearKnee: [-17, -22], rearFoot: [-28, -11] } },
+  earthSpike: { trail: 'spike', angle: Math.PI / 2, wind: { lean: -4, drop: -3, elbow: [-9, -55], hand: [2, -75], rearElbow: [14, -52], rearHand: [8, -73], frontKnee: [16, -29], frontFoot: [8, -17], rearKnee: [-16, -26], rearFoot: [-20, -15] },
+    strike: { lean: 18, drop: 12, head: [22, -42], elbow: [25, -17], hand: [28, 3], rearElbow: [15, -17], rearHand: [22, 2], frontKnee: [21, -18], frontFoot: [30, -4], rearKnee: [-15, -20], rearFoot: [-27, -11] } },
+  fireLift: { trail: 'uppercut', angle: -Math.PI / 2, wind: { lean: -8, drop: 6, elbow: [-11, -27], hand: [-7, -36], rearHand: [18, -46], frontKnee: [15, -12], frontFoot: [22, -1], rearFoot: [-24, -1] },
+    strike: { lean: 15, drop: -2, elbow: [25, -46], hand: [32, -67], rearElbow: [-7, -35], rearHand: [5, -46], frontKnee: [21, -27], frontFoot: [14, -13], rearKnee: [-12, -17], rearFoot: [-21, -1] } },
+  fireKick: { trail: 'kick', contact: 'frontFoot', wind: { lean: -8, frontKnee: [13, -34], frontFoot: [5, -23], rearKnee: [-13, -23], rearFoot: [-25, -14], elbow: [12, -39], hand: [20, -50], rearHand: [-10, -34] },
+    strike: { lean: -10, drop: -1, frontKnee: [25, -32], frontFoot: [51, -31], rearKnee: [-13, -24], rearFoot: [-24, -12], elbow: [8, -39], hand: [16, -50], rearElbow: [-22, -36], rearHand: [-29, -26] } },
+  fireSwitchKick: { trail: 'kick', contact: 'rearFoot', wind: { lean: -4, rearKnee: [-7, -33], rearFoot: [-16, -23], frontKnee: [18, -24], frontFoot: [27, -14], elbow: [14, -39], hand: [23, -50], rearHand: [-16, -37] },
+    strike: { lean: -10, drop: -3, rearKnee: [25, -38], rearFoot: [51, -44], frontKnee: [-5, -25], frontFoot: [-18, -13], elbow: [5, -39], hand: [16, -51], rearElbow: [-24, -38], rearHand: [-34, -30] } },
+  fireHeel: { trail: 'heel', contact: 'frontFoot', wind: { lean: -14, drop: -3, frontKnee: [6, -35], frontFoot: [-14, -43], rearKnee: [-13, -23], rearFoot: [-26, -10], elbow: [8, -40], hand: [21, -51], rearHand: [-24, -39] },
+    strike: { lean: -15, drop: -2, frontKnee: [25, -34], frontFoot: [55, -28], rearKnee: [-15, -23], rearFoot: [-29, -12], elbow: [6, -40], hand: [19, -50], rearElbow: [-25, -38], rearHand: [-37, -30] } },
+};
+
+const DEFAULT_AERIAL_POSE = { air: 'airPalm', water: 'waterPalm', earth: 'earthHammer', fire: 'fireKick' };
+
 function poseWith(base, overrides) {
   const pose = {};
   for (const key of POSE_JOINTS) pose[key] = [...base[key]];
@@ -156,12 +191,18 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
       style = { trail: 'weapon', wind: { lean: -7, elbow: [-11, -43], hand: [-14, -55], weaponAngle: -2 }, strike: { lean: 11, elbow: [23, -38], hand: [37, -40], weaponAngle: -0.08, frontFoot: [21, -1], rearFoot: [-18, -1] } };
     }
     if (kind === 'runAttack') style = { trail: 'rush', wind: { lean: 3, drop: 6, hand: [8, -44] }, strike: { lean: 17, drop: 3, elbow: [30, -38], hand: [46, -38], rearFoot: [-25, -4], frontFoot: [20, -1], weaponAngle: -0.08 } };
-    if (kind === 'aerial') style = { trail: fighter.element === 'air' ? 'rise' : 'kick', contact: 'frontFoot', wind: { lean: -6, frontKnee: [13, -30], frontFoot: [6, -21], hand: [15, -48] }, strike: { lean: -8, frontKnee: [24, -30], frontFoot: [45, -24], rearFoot: [-19, -14], hand: [16, -49] } };
+    if (kind === 'aerial' && !fighter.weapon) style = MARTIAL_POSES[DEFAULT_AERIAL_POSE[fighter.element] || 'airPalm'];
     if (kind === 'throw' || kind === 'bodyThrow') style = { trail: 'throw', wind: { lean: -8, elbow: [-12, -49], hand: [-17, -64], weaponAngle: -1.8 }, strike: { lean: 12, elbow: [25, -49], hand: [43, -51], weaponAngle: -0.2, frontFoot: [23, -1] } };
     if (kind === 'grabPunch') style = { trail: 'body',
       wind: { lean: -3, drop: 3, elbow: [-7, -34], hand: [-9, -43], rearElbow: [20, -33], rearHand: [33, -38] },
       strike: { lean: 10, drop: 5, elbow: [24, -32], hand: [39, -34], rearElbow: [20, -33], rearHand: [33, -38], frontFoot: [20, -1] } };
     if (kind === 'special' || kind === 'burst') style = CAST_POSES[fighter.element] || CAST_POSES.air;
+    if (!fighter.weapon && (action?.variant === 'launcher' || action?.variant === 'aerial')) {
+      let poseKey = action.move?.pose;
+      if (poseKey === 'airHeel' && action.airIndex >= 2) poseKey = 'airDiveHeel';
+      if (poseKey === 'fireKick' && action.airIndex % 2 === 1) poseKey = 'fireSwitchKick';
+      style = MARTIAL_POSES[poseKey] || style;
+    }
     const windup = Math.max(0.035, action?.windup || 0.11);
     const activeUntil = Math.max(windup + 0.025, action?.activeUntil || windup + 0.07);
     const duration = Math.max(activeUntil + 0.04, action?.duration || activeUntil + 0.18);
@@ -923,6 +964,11 @@ export class Renderer {
     const cast = style.trail === 'cast';
     ctx.save();
     ctx.globalAlpha *= stroke * (reducedMotion ? 0.6 : fighter.action?.kind === 'grabPunch' ? 0.65 : 0.9);
+    if (style.angle) {
+      ctx.translate(x, y);
+      ctx.rotate(style.angle);
+      ctx.translate(-x, -y);
+    }
     if (style.trail === 'throw') {
       if (!reducedMotion) line(ctx, [[x - 24, y + 3], [x - 5, y]], '#fff8e8', 4);
     } else if (reducedMotion) {
@@ -941,7 +987,16 @@ export class Renderer {
     } else if (fighter.element === 'air') {
       // Broad, open crescents follow the palm or rising foot.
       ctx.beginPath();
-      if (style.trail === 'rise') ctx.arc(1, -29, 43, 0.55, -1.2, true);
+      if (style.trail === 'rise') {
+        ctx.moveTo(-17, -14);
+        ctx.bezierCurveTo(45, -13, 48, -53, x, y);
+      } else if (style.trail === 'wheel') {
+        ctx.moveTo(-29, -17);
+        ctx.bezierCurveTo(-38, -70, 29, -84, x, y);
+      } else if (style.trail === 'dive') {
+        ctx.moveTo(x - 15, y - 68);
+        ctx.bezierCurveTo(x + 20, y - 64, x + 28, y - 15, x, y);
+      }
       else {
         ctx.moveTo(x - 40, y + 16);
         ctx.bezierCurveTo(x + 20, y + 20, x + 21, y - 23, x - 31, y - 17);
@@ -969,7 +1024,13 @@ export class Renderer {
     } else if (fighter.element === 'water') {
       // A continuous ribbon bends around the fighter, then snaps toward the hand.
       ctx.beginPath();
-      if (style.trail === 'pull') {
+      if (style.trail === 'redirect') {
+        ctx.moveTo(-21, -12);
+        ctx.bezierCurveTo(-27, -43, 36, -26, x + 1, y);
+      } else if (style.trail === 'flow') {
+        ctx.moveTo(-11, -59);
+        ctx.bezierCurveTo(27, -67, 65, -44, x + 3, y + 3);
+      } else if (style.trail === 'pull') {
         ctx.moveTo(45, -19);
         ctx.bezierCurveTo(66, -45, 24, -65, x + 2, y);
       } else {

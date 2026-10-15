@@ -2,10 +2,10 @@ export const WIDTH = 1280;
 export const HEIGHT = 720;
 
 export const ELEMENTS = {
-  air: { name: 'Air', title: 'The wanderer', color: '#388e8b', description: 'Quick palms into a rising kick. Jump after contact to chase a launch.', special: 'Wind bolt', burst: 'Cyclone', speed: 350, hp: 100, damage: 14, knockback: 460, specialCost: 14, specialCooldown: 0.48, burstCost: 45, burstCooldown: 5 },
-  water: { name: 'Water', title: 'The tidekeeper', color: '#397fbe', description: 'Draw enemies close, freeze, then shatter. Parry to empower your next strike.', special: 'Ice shard', burst: 'Healing tide', speed: 305, hp: 115, damage: 15, knockback: 320, specialCost: 18, specialCooldown: 0.6, burstCost: 45, burstCooldown: 6 },
-  earth: { name: 'Earth', title: 'The sentinel', color: '#9a7935', description: 'Planted blows. Armored follow-ups end in a guard-breaking slam.', special: 'Boulder', burst: 'Seismic slam', speed: 265, hp: 145, damage: 22, knockback: 540, specialCost: 24, specialCooldown: 0.85, burstCost: 50, burstCooldown: 6 },
-  fire: { name: 'Fire', title: 'The spark', color: '#c5573f', description: 'Advance with every strike. Finish with a blazing rush and cancel into flames.', special: 'Ember fan', burst: 'Flare nova', speed: 325, hp: 105, damage: 18, knockback: 380, specialCost: 18, specialCooldown: 0.46, burstCost: 50, burstCooldown: 5.5 },
+  air: { name: 'Air', title: 'The wanderer', color: '#388e8b', description: 'Circle and evade. Rising palms lead into three aerial strikes and a descending heel.', special: 'Wind bolt', burst: 'Cyclone', speed: 350, hp: 100, damage: 14, knockback: 460, specialCost: 14, specialCooldown: 0.48, burstCost: 45, burstCooldown: 5 },
+  water: { name: 'Water', title: 'The tidekeeper', color: '#397fbe', description: 'Yield and redirect. Draw foes into a rising sweep, then send them away with flowing palms.', special: 'Ice shard', burst: 'Healing tide', speed: 305, hp: 115, damage: 15, knockback: 320, specialCost: 18, specialCooldown: 0.6, burstCost: 45, burstCooldown: 6 },
+  earth: { name: 'Earth', title: 'The sentinel', color: '#9a7935', description: 'Rooted power. An armored uppercut leads to a heavy air hammer and downward smash.', special: 'Boulder', burst: 'Seismic slam', speed: 265, hp: 145, damage: 22, knockback: 540, specialCost: 24, specialCooldown: 0.85, burstCost: 50, burstCooldown: 6 },
+  fire: { name: 'Fire', title: 'The spark', color: '#c5573f', description: 'Direct pressure. A driving uppercut links into advancing flying kicks and a blazing heel.', special: 'Ember fan', burst: 'Flare nova', speed: 325, hp: 105, damage: 18, knockback: 380, specialCost: 18, specialCooldown: 0.46, burstCost: 50, burstCooldown: 5.5 },
 };
 
 // Frame rhythms adapted from the LF2 investigation; simulation stays at 120 Hz.
@@ -34,6 +34,39 @@ export const COMBAT = {
     strike(4*tick, 3*tick, 7*tick, 108, 34, 1.5, 650, .55, { knockdown: true, lift: 210, fall: 70 }),
   ] },
 };
+
+// Original aerial routes informed by LF2's separate jump/dash attacks and
+// authored launch/carry/downward vectors. Budgets and jump cancels are ours.
+Object.assign(COMBAT.air, {
+  launcher: strike(3*tick, 3*tick, 8*tick, 98, 12, 1.05, 75, .8, { pose: 'airLift', lift: 680, launcher: true, fall: 25 }),
+  aerial: [
+    strike(2*tick, 3*tick, 3*tick, 102, 10, .85, 45, .45, { pose: 'airPalm', lift: 360, selfLift: 340, fall: 0 }),
+    strike(2*tick, 3*tick, 3*tick, 112, 12, .95, 60, .45, { pose: 'airHeel', lift: 340, selfLift: 320, fall: 0 }),
+    strike(3*tick, 3*tick, 6*tick, 118, 14, 1.35, 180, .55, { pose: 'airHeel', spike: 680, knockdown: true, fall: 70 }),
+  ],
+});
+Object.assign(COMBAT.water, {
+  launcher: strike(4*tick, 3*tick, 8*tick, 112, 7, 1, -45, .85, { pose: 'waterLift', lift: 650, launcher: true, fall: 25 }),
+  aerial: [
+    strike(3*tick, 3*tick, 3*tick, 118, 4, 1, -55, .5, { pose: 'waterPalm', lift: 350, selfLift: 320, fall: 0 }),
+    strike(3*tick, 3*tick, 6*tick, 126, 6, 1.5, 420, .55, { pose: 'waterSweep', lift: 160, knockdown: true, fall: 70 }),
+  ],
+});
+Object.assign(COMBAT.earth, {
+  launcher: strike(6*tick, 3*tick, 9*tick, 104, 10, 1.2, 60, .9, { pose: 'earthLift', armor: true, lift: 690, launcher: true, fall: 25 }),
+  aerial: [
+    strike(4*tick, 3*tick, 4*tick, 115, 8, 1.1, 55, .55, { pose: 'earthHammer', lift: 390, selfLift: 360, fall: 0 }),
+    strike(4*tick, 3*tick, 7*tick, 124, 12, 1.65, 160, .65, { pose: 'earthSpike', spike: 900, knockdown: true, guardBreak: true, fall: 70 }),
+  ],
+});
+Object.assign(COMBAT.fire, {
+  launcher: strike(3*tick, 3*tick, 8*tick, 96, 23, 1.1, 120, .8, { pose: 'fireLift', lift: 650, launcher: true, fall: 25 }),
+  aerial: [
+    strike(2*tick, 3*tick, 3*tick, 106, 20, .9, 105, .45, { pose: 'fireKick', lift: 350, selfLift: 330, fall: 0 }),
+    strike(2*tick, 3*tick, 3*tick, 114, 22, 1, 120, .45, { pose: 'fireKick', lift: 330, selfLift: 310, fall: 0 }),
+    strike(3*tick, 3*tick, 6*tick, 122, 26, 1.4, 600, .55, { pose: 'fireHeel', lift: 180, knockdown: true, fall: 70 }),
+  ],
+});
 
 export const ARENAS = {
   air: { name: 'Sky monastery', subtitle: 'Above the clouds', sky: '#e8eee5', ink: '#425c57', accent: '#71a397' },

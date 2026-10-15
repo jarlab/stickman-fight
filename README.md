@@ -24,6 +24,8 @@ Open **http://127.0.0.1:5173** in a desktop browser. No `npm install`, game edit
 | J | Tap with each jab's recovery; a recent tap queues the next strike |
 | J while holding an enemy | Punch once; tap late in recovery to queue another punch |
 | J while running / airborne | Running attack / aerial attack |
+| Up + J while grounded and unarmed | Elemental launcher; costs 8 energy |
+| Space + J after a launcher hits | Jump follow-up into an aerial chain |
 | K | Elemental shot |
 | L | Signature ability |
 | I | Guard; raise it just before a frontal hit to parry |
@@ -41,6 +43,8 @@ Tap **J** toward the end of each jab to keep attacking. One recent input is reme
 
 After a melee hit connects, **K** or **L** can cancel during its follow-up window if you have enough energy and the power is ready. Air can jump or dash out of a confirmed hit; Fire can dash. These elemental options are deliberate additions to the LF2-inspired jab rhythm. Commands such as **I → right → J** remember their ordered steps without a time limit; a conflicting fresh input or a second **I** clears the pending sequence.
 
+**Launch and follow:** hold **W / ↑** and tap **J**, release up, then press **Space + J** after the launch connects. Tap **J** late in each aerial strike's recovery to continue. All elements can chase a confirmed launcher; a whiff or successful block must recover. Air and Fire have three aerial strikes, Water and Earth have two. Contacts earn a brief lift to keep the route reachable, while the final strike knocks the target away or down. Weak standing jabs cannot extend a launched victim. Damage scales down across a juggle, and four qualifying hits force ordinary opponents into protected knockdown. The aerial attack budget resets on landing, not double jumps. Weapons share their wielder's aerial route, but launchers require empty hands.
+
 After an enemy staggers and shows stars, approach unarmed and press **E** to grab. Press **J** to punch without releasing your grip. Each punch has startup, a single impact and full recovery; a late J or U queues the next punch or throw. Turn left or right, then press **U** to throw; hold up/down with U to aim through depth. The flying body can knock down multiple opponents, then takes damage on landing. **E** releases without throwing. You stand still and remain vulnerable while holding someone; they escape after a short time, and guardians break free faster. Punches do not renew the hold. Enemies can catch you after making you dizzy, pause, punch once and throw you. Other enemies stop starting attacks while you are held or thrown; landing leads into the normal protected knockdown recovery.
 
 **Recovery rolls:** tap **Shift + a direction** just before landing or while knocked down. You briefly settle, then roll across the floor or into another depth lane. The roll carries you through a crowd, protects its opening, and has a short vulnerable finish. Direction is committed; attacks cannot cancel it. A near-landing tap uses the normal short input buffer, while an early airborne tap expires. Throw landing damage still applies before recovery. Waiting for the normal get-up remains available.
@@ -49,10 +53,10 @@ Contact briefly holds the two fighters while the surrounding crowd keeps moving.
 
 ## Fighters
 
-- **Air / The wanderer — Rising wind:** quick palms build an opening for a rising kick that launches the opponent. Jump after contact to follow up in the air. Wind bolts and a cyclone control crowds.
-- **Water / The tidekeeper — Tidal counter:** alternating strikes draw opponents close; the finisher freezes a vulnerable opponent. Strike frozen enemies to shatter them. A successful parry empowers the next strike. Ice shards and a healing tide support this counterattacking style.
-- **Earth / The sentinel — Mountain breaker:** deliberate, planted blows gain armor on follow-ups. The finisher is a guard-breaking slam that spikes airborne opponents down. Boulders and seismic slams punish opponents who stay in range.
-- **Fire / The spark — Blazing rush:** fast strikes advance into a vulnerable opponent, opening a forceful rush finisher. Cancel a confirmed hit into an ember volley or flare nova to maintain pressure and burn opponents.
+- **Air / The wanderer — Rising wind:** circular palms, evasive footwork and a rising lift. Three quick aerial strikes end in a descending heel. Wind bolts and a cyclone control crowds.
+- **Water / The tidekeeper — Tidal counter:** yielding sweeps and redirection draw foes close, then flowing aerial palms push them away. The ground finisher freezes; a successful parry empowers the next strike. Ice shards and a healing tide support counterattacks.
+- **Earth / The sentinel — Mountain breaker:** rooted stances, armored uppercuts and heavy hammers. The two-strike aerial route ends in a steep downward smash. Ground finishers break guards; boulders and seismic slams punish opponents who stay in range.
+- **Fire / The spark — Blazing rush:** direct uppercuts and advancing flying kicks. Three aerial strikes carry opponents forward into a forceful heel finish. Cancel confirmed hits into embers or a flare nova to sustain pressure.
 
 ## Modes
 
@@ -98,3 +102,5 @@ The [LF2 grab and throw investigation](docs/lf2-grab-investigation.md) records t
 The [LF2 held-punch and enemy-grab investigation](docs/lf2-grab-punch-investigation.md) records single-contact grip strikes, their startup/recovery, shared AI action inputs, and the limits of the recovered enemy policy.
 
 The [LF2 knockdown and rolling investigation](docs/lf2-recovery-investigation.md) distinguishes native aerial recovery, ground rolling and get-up protection from our directional roll after knockdown.
+
+The [LF2 aerial combat investigation](docs/lf2-aerial-investigation.md) records separate airborne attacks, contact eligibility, launch vectors and landing behavior, alongside our original elemental chains and juggle limits.

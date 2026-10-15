@@ -489,10 +489,11 @@ test('air can jump-cancel its launcher and connect a natural aerial chase', () =
 test('repeated airborne hits eventually cause hard knockdown instead of an endless juggle', () => {
   const { game, player, enemy } = combatFixture('air');
   Object.assign(enemy, { z: 150, y: enemy.depth - 150, grounded: false });
-  for (let hit = 1; hit <= 3; hit += 1) {
+  // One launcher plus three follow-ups is the maximum current air route.
+  for (let hit = 1; hit <= 4; hit += 1) {
     until(game, () => enemy.invulnerable <= 0, 'the next distinct hit becomes eligible');
     assert.equal(game.damage(enemy, 5, 1, player, { light: true, lift: 180, knockback: 0 }), true);
-    if (hit < 3) assert.equal(enemy.knockdown, 0);
+    if (hit < 4) assert.equal(enemy.knockdown, 0);
   }
   assert.ok(enemy.knockdown > 0);
   until(game, () => enemy.invulnerable <= 0, 'the hit immunity expires while the opponent stays knocked down');

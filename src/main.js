@@ -1,7 +1,7 @@
 import { Game } from './engine.js';
 import { Renderer } from './renderer.js';
 import { KeyboardInput, PLAY_KEYS } from './input.js';
-import { ELEMENTS, ARENAS, MODES, DIFFICULTIES } from './data.js';
+import { ELEMENTS, COMBAT, ARENAS, MODES, DIFFICULTIES } from './data.js';
 
 const $ = (id) => document.getElementById(id);
 const STORAGE_KEY = 'fourfold:v1';
@@ -253,7 +253,7 @@ function updateHud() {
   const shotReadiness = abilityReadiness(p, 'special', element.specialCost);
   const burstReadiness = abilityReadiness(p, 'burst', element.burstCost);
   const hitStreak = s.combo >= 2 && s.comboTimer > 0 && s.status !== 'ready' ? s.combo : 0;
-  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, p.grabTarget, p.grabbedBy, Boolean(p.recoveryRoll), p.knockdown > 0, p.grounded, s.arena, s.objective, shotReadiness, burstReadiness, hitStreak].join('|');
+  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, p.grabTarget, p.grabbedBy, Boolean(p.recoveryRoll), p.knockdown > 0, p.grounded, p.action?.launched, p.airChain, s.arena, s.objective, shotReadiness, burstReadiness, hitStreak].join('|');
   if (signature !== hudSignature) {
     hudSignature = signature;
     updateMeter('health', p.hp, p.maxHp);
@@ -280,6 +280,8 @@ function updateHud() {
       : p.grabTarget != null ? 'ENEMY HELD · J PUNCH / U THROW / E RELEASE'
       : p.recoveryRoll ? 'RECOVERY ROLL'
       : p.knockdown > 0 ? p.grounded ? 'DOWN · SHIFT + DIRECTION TO ROLL' : 'SHIFT + DIRECTION · ROLL ON LANDING'
+      : p.action?.launched ? 'LAUNCH · SPACE + J TO FOLLOW'
+      : !p.grounded && p.airChain > 0 ? `AIR ${p.airChain}/${COMBAT[p.element].aerial.length} · ${p.airChain < COMBAT[p.element].aerial.length ? 'TAP J LATE TO LINK' : 'LAND TO RESET'}`
       : p.weapon ? `${p.weapon.toUpperCase()} · ${p.weaponHits} HITS · U THROW / E DROP`
       : 'UNARMED · E GRAB / PICK UP / DRINK';
   }

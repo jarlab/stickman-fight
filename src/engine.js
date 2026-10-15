@@ -51,7 +51,7 @@ export class Game {
       energy: 100, maxEnergy: 100, facing: team === 'player' ? 1 : -1,
       grounded: true, jumps: 0, attackTimer: 0, attackKind: '',
       guard: false, guardHeld: false, parryTimer: 0, parryCooldown: 0, invulnerable: 0,
-      stun: 0, cooldowns: { attack: 0, special: 0, burst: 0, dash: 0 },
+      stun: 0, cooldowns: { attack: 0, special: 0, burst: 0, dash: 0, launcher: 0 },
       weapon: null, weaponHits: 0, dead: false, aiTimer: 0.8 + this.random(),
       bossPhase: 1, tell: 0, action: null,
       dashTime: 0, dashUsed: false, slow: 0, burn: 0, jumpTimer: 0, burnTick: 0,
@@ -61,7 +61,7 @@ export class Game {
       hitLag: 0, hitLagAt: -1, stagger: 0,
       hitReact: 0, hitMax: 0, hitDirection: 1, hitStrength: 0, hitType: 'stagger',
       grabTarget: null, grabbedBy: null, grabTime: 0, thrown: null,
-      recoveryRoll: null, downTime: 0,
+      recoveryRoll: null, downTime: 0, airChain: 0,
     };
   }
 
@@ -81,7 +81,7 @@ export class Game {
     const s = this.state;
     this.grapples.release(this, s.player);
     Object.assign(s.player, { x: 590, y: 555, depth: 555, z: 0, vDepth: 0, vx: 0, vy: 0, grounded: true, jumps: 0, dashUsed: false, dashTime: 0, stun: 0, burn: 0, slow: 0, action: null, guard: false, parryTimer: 0, attackTimer: 0, tell: 0, knockdown: 0, comboIndex: 0, comboTimer: 0 });
-    Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false, hitLag: 0, stagger: 0, thrown: null, recoveryRoll: null, downTime: 0 });
+    Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false, hitLag: 0, stagger: 0, thrown: null, recoveryRoll: null, downTime: 0, airChain: 0 });
     this.clearCombatInput(s.player);
   }
 
@@ -326,6 +326,8 @@ export class Game {
     const landingVelocity = f.vy;
     moveFighter(f, dt);
     if (wasAirborne && f.grounded) {
+      f.airChain = 0;
+      if (f.action?.variant === 'aerial') this.endAction(f);
       if (f.knockdown > 0) {
         this.impact(f, null, Math.max(.6, landingVelocity / 900), true, 'land');
         this.state.effects.push({ x: f.x, y: f.depth, r: 42, life: .25, maxLife: .25, color: '#b2a58a', kind: 'shockwave' });
@@ -345,6 +347,7 @@ export class Game {
     const kind = ['burst', 'special', 'throw', 'attack', 'dash', 'jump', 'interact'].find(key => input[key]);
     if (kind) f.buffer = {
       kind, command: !!input.command, ttl: input.command ? null : INPUT_WINDOW,
+      launcher: kind === 'attack' && (input.launcher || (input.attackDepthDirection ?? Number(!!input.down) - Number(!!input.up)) < 0),
       direction: input.attackDirection ?? Number(!!input.right) - Number(!!input.left),
       depthDirection: input.attackDepthDirection ?? Number(!!input.down) - Number(!!input.up),
       // A jump/dash and a strike can arrive in the same browser frame.
@@ -433,10 +436,11 @@ export class Game {
     }
     const action = f.action;
     if (action) {
-      const mobility = (kind === 'jump' && f.element === 'air') || (kind === 'dash' && ['air', 'fire'].includes(f.element));
+      const launchChase = action.launched && (kind === 'jump' || queued.mobility === 'jump');
+      const mobility = launchChase || (kind === 'jump' && f.element === 'air' && action.variant !== 'launcher') || (kind === 'dash' && ['air', 'fire'].includes(f.element));
       // Basic jabs finish recovery. Only our authored power/mobility links cancel.
       if (action.kind !== 'melee' || !action.connected || action.t < action.chainAt || !(skill || mobility)) return;
-      if (queued.mobility === 'jump' && f.element !== 'air') return;
+      if (queued.mobility === 'jump' && f.element !== 'air' && !launchChase) return;
       if (queued.mobility === 'dash' && !['air', 'fire'].includes(f.element)) return;
       if (skill && (f.cooldowns[kind] > 0 || f.energy < ELEMENTS[f.element][`${kind}Cost`])) return;
       if (kind === 'jump' && !f.grounded && f.jumps >= 2) return;
@@ -462,7 +466,7 @@ export class Game {
       f.buffer = null;
     } else if (!f.guard) {
       if (queued.direction) f.facing = queued.direction;
-      if (this.startAction(f, kind === 'attack' ? 'melee' : kind)) f.buffer = null;
+      if (this.startAction(f, kind === 'attack' ? 'melee' : kind, queued.launcher)) f.buffer = null;
     }
   }
 
@@ -500,14 +504,18 @@ export class Game {
     f.jumpTimer = 0.22;
   }
 
-  startAction(f, kind) {
+  startAction(f, kind, requestLauncher = false) {
     if (f.recoveryRoll || f.grabbedBy != null || f.grabTarget != null) return false;
     const spec = ELEMENTS[f.element];
     const basic = kind === 'melee' || kind === 'throw';
+    const aerial = kind === 'melee' && !f.grounded;
+    const launcher = kind === 'melee' && f.grounded && !f.weapon && requestLauncher;
+    if (aerial && f.airChain >= COMBAT[f.element].aerial.length) return false;
+    if (launcher && f.cooldowns.launcher > 0) return false;
     const key = basic ? 'attack' : kind;
     if (kind === 'throw' && !f.weapon) return false;
     if (f.cooldowns[key] > 0) return false;
-    const cost = basic ? 0 : spec[`${kind}Cost`];
+    const cost = launcher ? 8 : basic ? 0 : spec[`${kind}Cost`];
     if (f.energy < cost) {
       if (f.team === 'player') this.floater(f.x, f.y - 90, 'Need energy', '#64736b');
       return false;
@@ -522,12 +530,19 @@ export class Game {
       f.comboTimer = 1.05;
       if (finish) { f.finisherWindow = 0; f.finisherTarget = null; }
     }
-    const move = kind === 'melee' ? { ...COMBAT[f.element].steps[f.comboIndex - 1] } : null;
+    const airIndex = f.airChain;
+    const move = kind === 'melee' ? { ...(aerial ? COMBAT[f.element].aerial[airIndex] : launcher ? COMBAT[f.element].launcher : COMBAT[f.element].steps[f.comboIndex - 1]) } : null;
+    if (aerial) f.airChain++;
+    if (launcher) { f.cooldowns.launcher = .8; f.running = false; }
     let windup = move?.windup ?? (kind === 'burst' ? .2 : .1);
-    if (f.team === 'enemy') windup = (kind === 'melee' ? windup + .16 : kind === 'burst' ? .85 : .55) * this.difficulty.aggression;
+    if (f.team === 'enemy') {
+      const tell = { easy: .16, normal: .10, hard: .06 }[this.state.settings.difficulty];
+      windup = (kind === 'melee' ? windup + (aerial ? tell * .35 : tell) : kind === 'burst' ? .85 : .55) * this.difficulty.aggression;
+    }
     const activeUntil = windup + (move?.active ?? .07);
     const duration = activeUntil + (move?.recovery ?? (kind === 'burst' ? .23 : .1));
-    f.action = { kind, t: 0, windup, activeUntil, duration, chainAt: activeUntil + COMBAT_TICK, done: false, connected: false, hitIds: [], move, weapon: f.weapon };
+    f.action = { kind, variant: aerial ? 'aerial' : launcher ? 'launcher' : null, airIndex: aerial ? airIndex : null,
+      t: 0, windup, activeUntil, duration, chainAt: activeUntil + COMBAT_TICK, done: false, connected: false, hitIds: [], move, weapon: f.weapon };
     f.cooldowns[key] = basic ? duration : spec[`${kind}Cooldown`];
     f.armor = !!move?.armor && f.grounded;
     if (kind === 'melee' && f.counterReady > 0) { f.action.counter = true; f.counterReady = 0; }
@@ -545,20 +560,31 @@ export class Game {
     const move = action?.move ?? COMBAT[f.element].steps[Math.max(0, f.comboIndex - 1)];
     const weapon = action?.weapon ?? f.weapon;
     const reach = weapon === 'spear' ? 142 : weapon === 'staff' ? 118 : f.type === 'boss' ? move.reach + 28 : move.reach;
-    const heavy = f.comboIndex === 3 || f.attackKind === 'runAttack' || weapon === 'crate';
+    const heavy = action?.variant ? !!(move.knockdown || move.launcher) : f.comboIndex === 3 || f.attackKind === 'runAttack' || weapon === 'crate';
     const running = f.attackKind === 'runAttack';
     for (const target of this.targets(f)) {
       const dx = target.x - f.x;
       if (action?.hitIds.includes(target.id)) continue;
-      if (!target.dead && Math.abs(target.depth - f.depth) < 32 && dx * f.facing > -12 && Math.abs(dx) < reach + target.w / 2 + (running ? 24 : 0) && Math.abs((target.z + target.h / 2) - (f.z + f.h / 2)) < 70) {
+      if (!target.dead && Math.abs(target.depth - f.depth) < 32 && dx * f.facing > -12 && Math.abs(dx) < reach + target.w / 2 + (running ? 24 : 0) && Math.abs((target.z + target.h / 2) - (f.z + f.h / 2)) < (action?.variant === 'aerial' ? 96 : 70)) {
+        const guarded = target.guard && target.facing === -f.facing;
         const landed = this.damage(target, (spec.damage + (weapon ? 9 : 0)) * (running ? 1.45 : move.damage) * (action?.counter ? 1.5 : 1), f.facing, f, {
           knockback: running ? spec.knockback * 1.5 : weapon === 'crate' ? 650 : move.knockback,
           element: f.element, knockdown: running || weapon === 'crate' || move.knockdown,
           heavy, light: !heavy, stun: move.stun, lift: running ? 270 : move.lift,
-          launcher: !running && move.launcher, freeze: running ? 0 : action?.counter ? .6 : move.freeze,
+          launcher: !running && move.launcher, aerial: action?.variant === 'aerial', freeze: running ? 0 : action?.counter ? .6 : move.freeze,
           guardBreak: move.guardBreak, contact: true, fall: move.fall, spike: move.spike,
         });
-        if (landed && action) { action.connected = true; action.hitIds.push(target.id); }
+        if (landed && action) {
+          action.connected = true;
+          action.hitIds.push(target.id);
+          const blocked = guarded && target.guard;
+          if (!blocked && target.hitType === 'launch' && target.vy < 0) action.launched = true;
+          // A finite per-flight string earns hang time only on actual contact.
+          if (!blocked && move.selfLift && !action.sustained && !f.grounded) {
+            f.vy = -move.selfLift;
+            action.sustained = true;
+          }
+        }
         if (f.action !== action) return; // A parry interrupts every remaining active frame.
       }
     }
@@ -623,6 +649,10 @@ export class Game {
       source.grabTarget === target.id && target.grabbedBy === source.id;
     if (options.grabPunch && !gripHit) return false;
     if (target.dead || (!landing && !gripHit && (target.invulnerable > 0 || target.knockdown > 0)) || target.hp <= 0) return false;
+    // LF2 gates ordinary low-fall contact on falling victims. Our qualified
+    // aerial routes replace that gate while keeping weak standing jabs out.
+    if (options.contact && !target.grounded && target.juggle > 0 && (options.fall ?? 20) < 41 &&
+        !options.aerial && !options.launcher && !options.freeze && !options.knockdown) return false;
     let knockback = options.knockback ?? 350;
     let heavy = !!(options.heavy || options.knockdown);
     let blocked = false;
@@ -669,6 +699,7 @@ export class Game {
       this.floater(target.x, target.y - target.h - 16, 'SHATTER', '#419da6');
     }
     if (source?.team === 'enemy') amount *= this.difficulty.damage * (source.type === 'boss' ? 1.25 : 0.72);
+    if (!blocked && !landing && !gripHit && !target.grounded && target.juggle > 0) amount /= 1 + target.juggle * .2;
     if (target.element === 'earth') { amount *= 0.86; knockback *= 0.75; }
     if (target.type === 'boss') knockback *= 0.55;
     const armored = target.armor && !heavy && !guardBroken;
@@ -680,7 +711,7 @@ export class Game {
       // their launch/freeze behavior, and bosses retain their shorter reactions.
       const pressure = target.stagger + (options.fall ?? 20);
       target.stagger = pressure > 40 ? 60 : pressure > 20 ? 40 : pressure > 0 ? 20 : 0;
-      if (pressure > 60 && !options.launcher && !options.freeze && target.type !== 'boss') {
+      if (pressure > 60 && target.grounded && !options.launcher && !options.freeze && target.type !== 'boss') {
         options = { ...options, knockdown: true };
         heavy = true;
       }
@@ -698,9 +729,9 @@ export class Game {
       if (!blocked) this.clearCombatInput(target);
       if (recoveryRequest) target.buffer = recoveryRequest;
       target.vx = direction * knockback;
-      const airborne = target.z > 20;
+      const airborne = !target.grounded && (target.z > 8 || target.juggle > 0);
       if (!blocked && (options.launcher || airborne)) target.juggle++;
-      const knockedDown = !blocked && target.type !== 'boss' && (options.knockdown || shatter || target.juggle >= 3);
+      const knockedDown = !blocked && target.type !== 'boss' && (options.knockdown || shatter || target.juggle >= 4);
       const dizzy = !blocked && !knockedDown && !options.launcher && !options.freeze && target.stagger >= 60;
       const lift = blocked || (options.freeze && !shatter) ? 0 : shatter ? 270 : options.lift ?? (knockedDown ? 220 : options.light ? (airborne ? 160 : 0) : 190 + Math.abs(knockback) * .12);
       if (lift > 0) { target.vy = -lift; target.grounded = false; }
@@ -916,7 +947,7 @@ export class Game {
     p.invulnerable = 2.5;
     p.weapon = null;
     p.weaponHits = 0;
-    p.cooldowns = { attack: 0, special: 0, burst: 0, dash: 0 };
+    p.cooldowns = { attack: 0, special: 0, burst: 0, dash: 0, launcher: 0 };
     s.projectiles = s.projectiles.filter(shot => shot.team === 'player');
     this.banner(training ? 'Keep practicing' : `${s.lives} ${s.lives === 1 ? 'life' : 'lives'} remaining`);
   }
