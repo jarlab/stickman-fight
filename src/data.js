@@ -87,4 +87,5 @@ export const DIFFICULTIES = {
   easy: { name: 'Easy', health: 0.75, damage: 0.65, speed: 0.8, aggression: 1.35 },
   normal: { name: 'Normal', health: 1, damage: 1, speed: 1, aggression: 1 },
   hard: { name: 'Hard', health: 1.3, damage: 1.3, speed: 1.12, aggression: 0.8 },
+  crazy: { name: 'Crazy', health: 1.5, damage: 1.55, speed: 1.2, aggression: .68 },
 };

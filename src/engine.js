@@ -283,7 +283,7 @@ export class Game {
       const direction = Number(!!input.right) - Number(!!input.left);
       const depthDirection = Number(!!input.down) - Number(!!input.up);
       if (direction && !f.action) f.facing = direction;
-      const pursuit = { easy: .65, normal: .82, hard: .9 }[this.state.settings.difficulty];
+      const pursuit = { easy: .65, normal: .82, hard: .9, crazy: .95 }[this.state.settings.difficulty];
       let speed = spec.speed * (f.team === 'enemy' ? pursuit * this.difficulty.speed : 1);
       f.running = !!input.run && !!direction && f.grounded && !f.guard && !f.action;
       if (f.running) speed *= 1.65;
@@ -552,7 +552,7 @@ export class Game {
     if (launcher) { f.cooldowns.launcher = .8; f.running = false; }
     let windup = move?.windup ?? (kind === 'burst' ? .2 : .1);
     if (f.team === 'enemy') {
-      const tell = { easy: .16, normal: .10, hard: .06 }[this.state.settings.difficulty];
+      const tell = { easy: .16, normal: .10, hard: .06, crazy: .04 }[this.state.settings.difficulty];
       windup = (kind === 'melee' ? windup + (aerial ? tell * .35 : tell) : kind === 'burst' ? .85 : .55) * this.difficulty.aggression;
     }
     const activeUntil = windup + (move?.active ?? .07);

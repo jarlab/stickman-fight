@@ -8,6 +8,7 @@ const LEVELS = {
   easy: { attackers: 1, reaction: .25, attackChance: .7, guardChance: .06, defense: .18, lead: 0, tempo: 1 },
   normal: { attackers: 2, reaction: .17, attackChance: .92, guardChance: .34, defense: .8, lead: .12, tempo: .65 },
   hard: { attackers: 3, reaction: .11, attackChance: 1, guardChance: .55, defense: 1, lead: .18, tempo: .43 },
+  crazy: { attackers: 4, reaction: .075, attackChance: 1, guardChance: .7, defense: 1, lead: .23, tempo: .3 },
 };
 const STYLES = {
   air: { range: 108, shotRange: 380, shotChance: .16, retreat: .55, runAt: 350 },
@@ -431,5 +432,9 @@ export class EnemyAI {
 
   occupied(game) {
     return game.state.enemies.filter(e => alive(e) && committed(e)).length;
+  }
+
+  capacity(game) {
+    return LEVELS[game.state.settings.difficulty].attackers;
   }
 }

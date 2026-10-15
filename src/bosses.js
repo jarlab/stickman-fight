@@ -43,7 +43,7 @@ export class BossDirector {
   updatePhase(game, e) {
     if (e.type !== 'boss' || !living(e) || e.bossPhase >= 2 || e.hp > e.maxHp * .5 ||
         unavailable(e) || e.action || isCommitted(e, game.state)) return false;
-    const capacity = game.state.settings.difficulty === 'easy' ? 1 : game.state.settings.difficulty === 'hard' ? 3 : 2;
+    const capacity = game.enemyAI.capacity(game);
     if (game.enemyAI.occupied(game) >= capacity) return false;
     this.cancel(game, e);
     e.bossPhase = 2;
@@ -77,7 +77,7 @@ export class BossDirector {
     if (['wind-lane', 'ice-lance', 'flame-rush'].includes(move) && lane > 32) return false;
     const spec = MOVES[move];
     if (e.energy < spec.cost) return false;
-    const adjustment = s.settings.difficulty === 'easy' ? .18 : s.settings.difficulty === 'hard' ? -.05 : 0;
+    const adjustment = { easy: .18, normal: 0, hard: -.05, crazy: -.1 }[s.settings.difficulty];
     const windup = Math.max(.5, spec.windup + adjustment);
     const direction = Math.sign(target.x - e.x) || e.facing;
     const action = { name: spec.name, move, hint: spec.hint, stage: 'windup', t: 0, windup,
@@ -89,7 +89,8 @@ export class BossDirector {
     action.duration = action.activeUntil + spec.recovery;
     e.bossAction = action;
     e.bossMoves = (e.bossMoves ?? 0) + 1;
-    e.bossMoveAfter = s.time + action.duration + (e.bossPhase === 2 ? 1.05 : 1.6);
+    const respite = e.bossPhase === 2 ? 1.05 : 1.6;
+    e.bossMoveAfter = s.time + action.duration + respite * (s.settings.difficulty === 'crazy' ? .7 : 1);
     e.energy -= spec.cost;
     e.facing = direction;
     e.vx = e.vDepth = 0;
