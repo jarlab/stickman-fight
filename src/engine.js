@@ -61,6 +61,7 @@ export class Game {
       hitLag: 0, hitLagAt: -1, stagger: 0,
       hitReact: 0, hitMax: 0, hitDirection: 1, hitStrength: 0, hitType: 'stagger',
       grabTarget: null, grabbedBy: null, grabTime: 0, thrown: null,
+      recoveryRoll: null, downTime: 0,
     };
   }
 
@@ -80,7 +81,7 @@ export class Game {
     const s = this.state;
     this.grapples.release(this, s.player);
     Object.assign(s.player, { x: 590, y: 555, depth: 555, z: 0, vDepth: 0, vx: 0, vy: 0, grounded: true, jumps: 0, dashUsed: false, dashTime: 0, stun: 0, burn: 0, slow: 0, action: null, guard: false, parryTimer: 0, attackTimer: 0, tell: 0, knockdown: 0, comboIndex: 0, comboTimer: 0 });
-    Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false, hitLag: 0, stagger: 0, thrown: null });
+    Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false, hitLag: 0, stagger: 0, thrown: null, recoveryRoll: null, downTime: 0 });
     this.clearCombatInput(s.player);
   }
 
@@ -212,6 +213,9 @@ export class Game {
 
   updateFighter(f, input, dt) {
     if (f.dead) return;
+    // Landing commitment ages through contact pauses, so a recent recovery
+    // input can survive the throw's landing hitlag. Airborne time never counts.
+    f.downTime = f.knockdown > 0 && f.grounded && !f.thrown ? f.downTime + dt : 0;
     // LF2 holds participants, including their physics and action clocks.
     // Projectiles and the rest of the crowd continue on the world clock.
     if (f.hitLag > 0) {
@@ -227,10 +231,6 @@ export class Game {
     for (const key of countdowns) f[key] = Math.max(0, (f[key] || 0) - dt);
     for (const key of Object.keys(f.cooldowns)) f.cooldowns[key] = Math.max(0, f.cooldowns[key] - dt);
     if (f.team === 'enemy') this.bufferInput(f, input);
-    if (f.knockdown > 0 && f.grounded) {
-      f.knockdown = Math.max(0, f.knockdown - dt);
-      if (!f.knockdown) { f.invulnerable = Math.max(f.invulnerable, .28); f.juggle = 0; f.stagger = 0; }
-    }
     f.armor = !!(f.action?.move?.armor && f.action.t < f.action.activeUntil && f.grounded);
     f.energy = Math.min(f.maxEnergy, f.energy + dt * (f.guard ? 2 : f.team === 'player' ? 14 : 18));
     if (f.burn > 0) {
@@ -244,6 +244,18 @@ export class Game {
     if (f.hp <= 0) { f.action = null; f.buffer = null; f.guard = false; return; }
     if (f.grabbedBy != null) { f.buffer = null; return; }
     if (f.grabTarget != null) { this.grapples.control(this, f, input, dt); return; }
+    if (f.recoveryRoll || this.tryRecoveryRoll(f)) {
+      this.updateRecoveryRoll(f, dt);
+      return;
+    }
+    if (f.knockdown > 0 && f.grounded) {
+      f.knockdown = Math.max(0, f.knockdown - dt);
+      if (!f.knockdown) {
+        f.invulnerable = Math.max(f.invulnerable, .28);
+        f.juggle = f.stagger = f.downTime = 0;
+        if (f.buffer?.kind === 'recover') f.buffer = null;
+      }
+    }
     const disabled = f.stun > 0 || f.knockdown > 0 || f.frozen > 0;
     if (!disabled && input.guard && f.action?.connected && f.action.t >= f.action.chainAt && !f.buffer) this.endAction(f);
     const guardPressed = !!input.guard && !f.guardHeld;
@@ -322,6 +334,13 @@ export class Game {
   }
 
   bufferInput(f, input) {
+    if (f.recoveryRoll) { f.buffer = null; return; }
+    if (f.knockdown > 0 && input.dash) {
+      f.buffer = { kind: 'recover', ttl: INPUT_WINDOW,
+        direction: input.attackDirection ?? Number(!!input.right) - Number(!!input.left),
+        depthDirection: input.attackDepthDirection ?? Number(!!input.down) - Number(!!input.up) };
+      return;
+    }
     if (input.freshInput && f.buffer?.command) f.buffer = null;
     const kind = ['burst', 'special', 'throw', 'attack', 'dash', 'jump', 'interact'].find(key => input[key]);
     if (kind) f.buffer = {
@@ -332,6 +351,42 @@ export class Game {
       // Keep that pair as one intent instead of silently discarding the movement.
       mobility: ['attack', 'special', 'burst', 'throw'].includes(kind) ? input.dash ? 'dash' : input.jump ? 'jump' : null : null,
     };
+  }
+
+  tryRecoveryRoll(f) {
+    const queued = f.buffer;
+    if (queued?.kind !== 'recover' || f.knockdown <= 0 || !f.grounded || f.thrown ||
+        f.downTime < .05 || f.frozen > 0 || f.grabbedBy != null || f.grabTarget != null) return false;
+    const direction = queued.direction || (queued.depthDirection ? 0 : f.facing);
+    const depthDirection = queued.depthDirection || 0;
+    this.clearCombatInput(f);
+    this.endAction(f);
+    Object.assign(f, { recoveryRoll: { t: 0, duration: .42, direction, depthDirection },
+      knockdown: 0, downTime: 0, stun: 0, stagger: 0, juggle: 0, hitReact: 0,
+      guard: false, guardHeld: false, parryTimer: 0, running: false, dashTime: 0,
+      z: 0, vy: 0, invulnerable: Math.max(f.invulnerable, .3) });
+    if (direction) f.facing = direction;
+    f.cooldowns.dash = Math.max(f.cooldowns.dash, .48);
+    this.effect(f.x, f.depth - 4, '#b2a58a', 8);
+    return true;
+  }
+
+  updateRecoveryRoll(f, dt) {
+    const roll = f.recoveryRoll;
+    const next = Math.min(roll.duration, roll.t + dt);
+    const progress = (roll.t + next) / (2 * roll.duration);
+    const speed = 720 * (1 - .75 * progress);
+    const diagonal = roll.direction && roll.depthDirection ? Math.SQRT1_2 : 1;
+    f.vx = roll.direction * speed * diagonal;
+    f.vDepth = roll.depthDirection * speed * .62 * diagonal;
+    f.vy = 0;
+    moveFighter(f, next - roll.t);
+    roll.t = next;
+    if (next >= roll.duration) {
+      f.recoveryRoll = null;
+      f.vx = f.vDepth = 0;
+      this.clearCombatInput(f);
+    }
   }
 
   endAction(f) { f.action = null; f.armor = false; f.tell = 0; f.attackTimer = 0; }
@@ -367,6 +422,7 @@ export class Game {
   consumeBuffer(f) {
     const queued = f.buffer;
     if (!queued || f.dashTime > 0) return;
+    if (queued.kind === 'recover') { f.buffer = null; return; }
     if (queued.afterDash) { queued.afterDash = false; queued.ttl = INPUT_WINDOW; }
     const kind = queued.kind;
     const skill = kind === 'special' || kind === 'burst';
@@ -445,7 +501,7 @@ export class Game {
   }
 
   startAction(f, kind) {
-    if (f.grabbedBy != null || f.grabTarget != null) return false;
+    if (f.recoveryRoll || f.grabbedBy != null || f.grabTarget != null) return false;
     const spec = ELEMENTS[f.element];
     const basic = kind === 'melee' || kind === 'throw';
     const key = basic ? 'attack' : kind;
@@ -537,7 +593,8 @@ export class Game {
     const spec = ELEMENTS[f.element];
     const radius = f.type === 'boss' ? 320 : f.element === 'air' ? 280 : 235;
     const s = this.state;
-    s.effects.push({ x: f.x, y: f.y - 30, r: radius, life: 0.55, maxLife: 0.55, color: spec.color, kind: f.element === 'earth' ? 'shockwave' : 'ring' });
+    s.effects.push({ x: f.x, y: f.y - 30, r: radius, life: 0.55, maxLife: 0.55,
+      color: spec.color, kind: 'signature', element: f.element, groundY: f.depth });
     if (f.element === 'water') {
       f.hp = Math.min(f.maxHp, f.hp + (f.team === 'player' ? 28 : 12));
       this.floater(f.x, f.y - 100, '+ healing tide', spec.color);
@@ -561,6 +618,7 @@ export class Game {
   damage(target, amount, direction, source, options = {}) {
     const s = this.state;
     const landing = options.throwLanding && target.thrown;
+    const recoveryRequest = landing && target.buffer?.kind === 'recover' ? target.buffer : null;
     const gripHit = options.grabPunch && source?.action?.kind === 'grabPunch' &&
       source.grabTarget === target.id && target.grabbedBy === source.id;
     if (options.grabPunch && !gripHit) return false;
@@ -635,8 +693,10 @@ export class Game {
       Object.assign(target, { vx: 0, vy: 0, vDepth: 0, hitReact: .22, hitMax: .22,
         hitDirection: direction, hitStrength: .75, hitType: 'grabHit' });
     } else if (!armored) {
+      target.recoveryRoll = null;
       this.endAction(target);
       if (!blocked) this.clearCombatInput(target);
+      if (recoveryRequest) target.buffer = recoveryRequest;
       target.vx = direction * knockback;
       const airborne = target.z > 20;
       if (!blocked && (options.launcher || airborne)) target.juggle++;
@@ -650,6 +710,7 @@ export class Game {
       if (knockedDown) {
         // Recovery starts on the floor, so a launched fighter never gets up midair.
         target.knockdown = .55;
+        target.downTime = 0;
         target.stagger = 0;
         if (!shatter) this.floater(target.x, target.y - target.h - 14, 'KNOCKDOWN', '#7b6554');
       } else if (dizzy && target.type !== 'boss') {
@@ -703,11 +764,11 @@ export class Game {
     s.lastImpact = { id: (s.lastImpact?.id || 0) + 1, element, heavy, kind, team: target.team, strength };
     s.impacts.push(s.lastImpact);
     if (s.impacts.length > 16) s.impacts.shift();
-    s.shake = Math.max(s.shake, kind === 'land' ? 2.5 : heavy ? 6 : kind === 'parry' ? 3 : 1.8 * strength);
+    s.shake = Math.max(s.shake, kind === 'land' ? 2.5 : heavy ? 8 : kind === 'parry' ? 4 : 3 * strength);
     if (kind !== 'land') s.effects.push({
-      x: target.x, y: target.y - target.h * .55, life: heavy ? .26 : .18,
-      maxLife: heavy ? .26 : .18, color: kind === 'parry' ? '#fffdf0' : ELEMENTS[element].color,
-      r: heavy ? 30 : 17, kind: 'impact', direction: target.hitDirection, heavy,
+      x: target.x, y: target.y - target.h * .55, life: heavy ? .28 : .22,
+      maxLife: heavy ? .28 : .22, color: kind === 'parry' ? '#fffdf0' : ELEMENTS[element].color,
+      r: heavy ? 34 : 22, kind: 'impact', direction: target.hitDirection, heavy, element, impactKind: kind,
     });
   }
 
@@ -771,7 +832,7 @@ export class Game {
     const fighters = [this.state.player, ...this.state.enemies];
     for (let i = 0; i < fighters.length; i++) for (let j = i + 1; j < fighters.length; j++) {
       const a = fighters[i], b = fighters[j];
-      if (a.grabTarget === b.id || b.grabTarget === a.id || a.thrown || b.thrown) continue;
+      if (a.grabTarget === b.id || b.grabTarget === a.id || a.thrown || b.thrown || a.recoveryRoll || b.recoveryRoll) continue;
       if (a.dead || b.dead || a.dashTime > 0 || b.dashTime > 0 || Math.abs(a.depth - b.depth) > 24 || Math.abs(a.z - b.z) > 45) continue;
       const dx = b.x - a.x;
       const distance = (a.w + b.w) / 2;
@@ -839,6 +900,8 @@ export class Game {
     if (p.hp > 0) return;
     this.grapples.release(this, p);
     p.thrown = null;
+    p.recoveryRoll = null;
+    p.downTime = 0;
     const training = s.settings.mode === 'training';
     if (!training) s.lives--;
     if (s.lives <= 0) {

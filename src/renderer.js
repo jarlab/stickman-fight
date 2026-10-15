@@ -59,6 +59,20 @@ const smooth = value => { const t = clamp01(value); return t * t * (3 - 2 * t); 
 const mix = (a, b, t) => a + (b - a) * t;
 const pointMix = (a, b, t) => [mix(a[0], b[0], t), mix(a[1], b[1], t)];
 
+const FIGHTING_STANCES = {
+  air: { lean: -3, rearFoot: [-18, -1], frontFoot: [17, -1], rearHand: [-17, -42], rearElbow: [-15, -32], elbow: [17, -35], hand: [26, -44] },
+  water: { lean: -4, drop: 4, rearFoot: [-20, -1], frontFoot: [21, -1], rearKnee: [-13, -12], frontKnee: [16, -12], rearElbow: [-15, -34], rearHand: [-5, -44], elbow: [18, -30], hand: [29, -35] },
+  earth: { lean: 1, drop: 5, rearFoot: [-23, -1], frontFoot: [24, -1], rearKnee: [-16, -11], frontKnee: [18, -11], rearElbow: [-15, -29], rearHand: [-9, -37], elbow: [20, -30], hand: [21, -40] },
+  fire: { lean: 5, drop: 1, rearFoot: [-21, -1], frontFoot: [17, -1], rearElbow: [-6, -34], rearHand: [8, -47], elbow: [21, -35], hand: [28, -45] },
+};
+
+const CAST_POSES = {
+  air: { trail: 'cast', wind: { lean: -8, rearHand: [-20, -48], hand: [-7, -57], elbow: [-11, -38] }, strike: { lean: 9, elbow: [25, -42], hand: [40, -45], rearElbow: [20, -29], rearHand: [36, -32], rearFoot: [-23, -1], frontFoot: [23, -1] } },
+  water: { trail: 'cast', wind: { lean: -9, drop: 6, hand: [-17, -33], elbow: [-19, -21], rearHand: [3, -54], rearFoot: [-24, -1], frontFoot: [25, -1] }, strike: { lean: 8, drop: 3, elbow: [24, -40], hand: [40, -45], rearHand: [28, -28], rearFoot: [-24, -1], frontFoot: [25, -1] } },
+  earth: { trail: 'cast', wind: { lean: -5, drop: 8, elbow: [-15, -25], hand: [-13, -38], rearHand: [4, -42], frontFoot: [27, -1], rearFoot: [-26, -1] }, strike: { lean: 14, drop: 8, elbow: [29, -31], hand: [44, -33], rearHand: [-12, -29], frontFoot: [29, -1], rearFoot: [-26, -1] } },
+  fire: { trail: 'cast', wind: { lean: -8, elbow: [-12, -39], hand: [-13, -51], rearHand: [17, -46], rearFoot: [-23, -1] }, strike: { lean: 15, elbow: [28, -41], hand: [44, -43], rearHand: [-13, -30], frontFoot: [24, -1], rearFoot: [-26, -1] } },
+};
+
 // Original combat silhouettes: every class has its own preparation and contact poses.
 const COMBO_POSES = {
   air: [
@@ -117,6 +131,15 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
     rearKnee: [-10 - stride * 3, -15 - Math.abs(stride) * 3], frontKnee: [8 + stride * 5, -15],
     rearElbow: [-14 - stride * 3, -32], rearHand: [-9 - stride * 5, -27], elbow: [14 + stride * 3, -35], hand: [19 - stride * 4, -42], weaponAngle: -1.24,
   };
+  if (fighter.grounded && speed < 0.15) rest = poseWith(rest, FIGHTING_STANCES[fighter.element] || FIGHTING_STANCES.air);
+  if (fighter.recoveryRoll) {
+    const progress = clamp01(fighter.recoveryRoll.t / fighter.recoveryRoll.duration);
+    const tuck = poseWith(rest, { hip: [-4, -17], shoulder: [-8, -29], head: [5, -33],
+      rearKnee: [8, -13], rearFoot: [4, -5], frontKnee: [15, -23], frontFoot: [17, -8],
+      rearElbow: [1, -32], rearHand: [11, -20], elbow: [11, -28], hand: [13, -15] });
+    const amount = smooth(progress / 0.12) * (1 - smooth((progress - 0.82) / 0.18));
+    return { pose: blendPose(rest, tuck, amount), stroke: 0, style: null, recoil: 0, speed };
+  }
   if (fighter.guard) rest = poseWith(rest, { lean: -2, drop: 2, rearElbow: [6, -39], rearHand: [14, -51], elbow: [12, -35], hand: [16, -51], rearFoot: [-15, -1], frontFoot: [13, -1] });
   if (fighter.grabTarget != null) rest = poseWith(rest, { lean: 5, drop: 3,
     elbow: [22, -38], hand: [34, -39], rearElbow: [16, -31], rearHand: [30, -33],
@@ -138,7 +161,7 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
     if (kind === 'grabPunch') style = { trail: 'body',
       wind: { lean: -3, drop: 3, elbow: [-7, -34], hand: [-9, -43], rearElbow: [20, -33], rearHand: [33, -38] },
       strike: { lean: 10, drop: 5, elbow: [24, -32], hand: [39, -34], rearElbow: [20, -33], rearHand: [33, -38], frontFoot: [20, -1] } };
-    if (kind === 'special' || kind === 'burst') style = { trail: 'cast', wind: { lean: -5, elbow: [-10, -34], hand: [-4, -45], rearHand: [5, -49] }, strike: { lean: 6, elbow: [21, -39], hand: [34, -47], rearElbow: [12, -31], rearHand: [27, -31] } };
+    if (kind === 'special' || kind === 'burst') style = CAST_POSES[fighter.element] || CAST_POSES.air;
     const windup = Math.max(0.035, action?.windup || 0.11);
     const activeUntil = Math.max(windup + 0.025, action?.activeUntil || windup + 0.07);
     const duration = Math.max(activeUntil + 0.04, action?.duration || activeUntil + 0.18);
@@ -492,7 +515,7 @@ export class Renderer {
       if (kind === 'fighter') this.drawFighter(entity, time, reducedMotion, state.player);
       else if (kind === 'corpse') this.drawCorpse(entity);
       else if (kind === 'pickup') this.drawWeaponPickup(entity, reducedMotion ? 0 : time);
-      else this.drawProjectile(entity, time);
+      else this.drawProjectile(entity, time, reducedMotion);
     }
     for (const effect of state.effects || []) if (effect.kind === 'impact' || effect.kind === 'slash') this.drawEffect(effect, reducedMotion);
     for (const particle of state.particles || []) this.drawParticle(particle, reducedMotion);
@@ -529,7 +552,7 @@ export class Renderer {
     const depth = groundDepth(entity);
     const height = Math.max(0, entity.z || depth - entity.y || 0);
     const scale = (entity.h || 66) / 66;
-    const radius = kind === 'pickup' ? (entity.kind === 'crate' ? 25 : 17) : kind === 'projectile' ? 14 : (entity.knockdown > 0 ? 31 : 22) * scale;
+    const radius = kind === 'pickup' ? (entity.kind === 'crate' ? 25 : 17) : kind === 'projectile' ? 14 : (entity.recoveryRoll ? 25 : entity.knockdown > 0 ? 31 : 22) * scale;
     const fade = Math.max(0.08, 0.2 - height / 1500);
     ctx.save();
     ctx.globalAlpha = fade * (kind === 'corpse' ? Math.min(1, entity.life || 1) : 1);
@@ -621,7 +644,7 @@ export class Renderer {
     const h = fighter.h || 66;
     const scale = h / 66;
     const color = elementColor(fighter.element);
-    const facing = fighter.facing < 0 ? -1 : 1;
+    const facing = (fighter.recoveryRoll?.direction || fighter.facing) < 0 ? -1 : 1;
     const previous = this.fighterAnimations.get(fighter);
     const hitLag = (fighter.hitLag || 0) > 0;
     // Action timers pause in the simulation; this clock also holds idle motion,
@@ -642,9 +665,10 @@ export class Renderer {
     const flutter = reducedMotion || frozen ? 0 : visualTime;
     const contactShake = !reducedMotion && hitLag && fighter.hitReact > 0 ? (Math.floor(time * 30) % 2 ? 2 : -2) : 0;
 
-    this.drawLaunchTrail(fighter, visualTime, reducedMotion);
+    if (fighter.recoveryRoll) this.drawRecoveryTrail(fighter, reducedMotion);
+    else this.drawLaunchTrail(fighter, visualTime, reducedMotion);
 
-    if ((fighter.knockdown || 0) > 0) {
+    if ((fighter.knockdown || 0) > 0 && !fighter.recoveryRoll) {
       const airborne = (fighter.z || 0) > 4;
       const prone = airborne ? 1 : smooth(fighter.knockdown / 0.18);
       const rotation = airborne ? Math.PI * 0.38 * (fighter.hitDirection || facing) + (reducedMotion ? 0 : Math.sin(visualTime * 9) * 0.18) : Math.PI / 2 * facing * prone;
@@ -668,7 +692,8 @@ export class Renderer {
 
     if (isPlayer) {
       ctx.globalAlpha = 0.8;
-      polygon(ctx, [[fighter.x - 5, fighter.y - h - 19], [fighter.x + 5, fighter.y - h - 19], [fighter.x, fighter.y - h - 13]], color, INK, 1);
+      const markerHeight = fighter.recoveryRoll ? h * 0.62 : h;
+      polygon(ctx, [[fighter.x - 5, fighter.y - markerHeight - 19], [fighter.x + 5, fighter.y - markerHeight - 19], [fighter.x, fighter.y - markerHeight - 13]], color, INK, 1);
       ctx.globalAlpha = 1;
     }
 
@@ -708,7 +733,14 @@ export class Renderer {
 
     ctx.translate(fighter.x + contactShake, fighter.y);
     ctx.scale(scale * facing, scale);
+    if (fighter.recoveryRoll && !reducedMotion) {
+      const progress = clamp01(fighter.recoveryRoll.t / fighter.recoveryRoll.duration);
+      ctx.translate(0, -22);
+      ctx.rotate(Math.PI * 2 * smooth((progress - 0.12) / 0.7));
+      ctx.translate(0, 22);
+    }
     if ((fighter.invulnerable || 0) > 0) ctx.globalAlpha = reducedMotion ? 0.8 : 0.74 + Math.sin(visualTime * 18) * 0.1;
+    this.drawGather(fighter, pose, reducedMotion);
     const { hip, shoulder, head, rearFoot, frontFoot, rearKnee, frontKnee, rearElbow, rearHand, elbow, hand } = pose;
     line(ctx, [hip, rearKnee, rearFoot], '#415451', 7);
     line(ctx, [[rearFoot[0] - 2, rearFoot[1]], [rearFoot[0] + 5, rearFoot[1]]], INK, 6);
@@ -813,7 +845,56 @@ export class Renderer {
         ctx.restore();
       }
     }
-    this.drawFighterHealth(fighter, h);
+    this.drawFighterHealth(fighter, fighter.recoveryRoll ? h * 0.62 : h);
+  }
+
+  drawRecoveryTrail(fighter, reducedMotion) {
+    if (reducedMotion) return;
+    const ctx = this.ctx;
+    const roll = fighter.recoveryRoll;
+    const progress = clamp01(roll.t / roll.duration);
+    const direction = roll.direction || 0;
+    const depthDirection = roll.depthDirection || 0;
+    ctx.save();
+    ctx.globalAlpha = Math.sin(progress * Math.PI) * 0.4;
+    for (let i = 0; i < 3; i += 1) {
+      const offset = 15 + i * 12;
+      const x = fighter.x - direction * offset;
+      const y = fighter.depth - depthDirection * offset * 0.45 + 2;
+      ctx.beginPath();
+      ctx.ellipse(x, y, 8 - i, 2 + i, 0, Math.PI, Math.PI * 2);
+      ctx.strokeStyle = i === 0 ? elementColor(fighter.element) : '#c2b48a';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawGather(fighter, pose, reducedMotion) {
+    const action = fighter.action;
+    if (!action || !['special', 'burst'].includes(action.kind) || action.t >= action.windup) return;
+    const ctx = this.ctx;
+    const color = elementColor(fighter.element);
+    const charge = clamp01(action.t / action.windup);
+    const radius = 9 + charge * (action.kind === 'burst' ? 16 : 8);
+    const [x, y] = pose.hand;
+    ctx.save();
+    ctx.globalAlpha *= 0.3 + charge * 0.3;
+    circle(ctx, x, y, radius, color);
+    ctx.globalAlpha *= 1.5;
+    elementGlyph(ctx, fighter.element, x, y, radius * 0.7, '#fff8e8', 2);
+    if (!reducedMotion) {
+      const turn = charge * Math.PI;
+      for (let i = 0; i < 3; i += 1) {
+        const angle = turn + i * Math.PI * 2 / 3;
+        const distance = radius + (1 - charge) * 18;
+        const px = x + Math.cos(angle) * distance;
+        const py = y + Math.sin(angle) * distance;
+        if (fighter.element === 'earth') polygon(ctx, [[px - 3, py + 2], [px - 2, py - 4], [px + 4, py - 1], [px + 2, py + 3]], '#aa9565', INK, 1);
+        else line(ctx, [[px, py], [x + Math.cos(angle - 0.3) * (distance + 9), y + Math.sin(angle - 0.3) * (distance + 9)]], color, 3);
+      }
+    }
+    ctx.restore();
   }
 
   drawLaunchTrail(fighter, time, reducedMotion) {
@@ -838,71 +919,135 @@ export class Renderer {
     const ctx = this.ctx;
     const color = elementColor(fighter.element);
     const contact = pose[style.contact || 'hand'];
+    const [x, y] = contact;
+    const cast = style.trail === 'cast';
     ctx.save();
-    ctx.globalAlpha *= stroke * (reducedMotion ? 0.36 : 0.75);
-    if (style.trail === 'cast') {
-      circle(ctx, contact[0] + 7, contact[1], 12 + stroke * 4, null, color, 2);
-      elementGlyph(ctx, fighter.element, contact[0] + 7, contact[1], 8 + stroke * 3, color, 2);
-    } else if (style.trail === 'throw') {
-      if (!reducedMotion) line(ctx, [[contact[0] - 20, contact[1] + 2], [contact[0] - 5, contact[1]]], '#f8f2dc', 3);
+    ctx.globalAlpha *= stroke * (reducedMotion ? 0.6 : fighter.action?.kind === 'grabPunch' ? 0.65 : 0.9);
+    if (style.trail === 'throw') {
+      if (!reducedMotion) line(ctx, [[x - 24, y + 3], [x - 5, y]], '#fff8e8', 4);
     } else if (reducedMotion) {
-      line(ctx, [[contact[0] + 4, contact[1] - 5], [contact[0] + 6, contact[1] + 4]], color, 2);
+      // Preserve the element and contact cue, without streaming ribbons or orbiting debris.
+      if (cast) elementGlyph(ctx, fighter.element, x + 10, y, 11, color, 2);
+      else line(ctx, [[x + 4, y - 8], [x + 8, y], [x + 4, y + 7]], color, 4);
     } else if (style.trail === 'weapon') {
       ctx.beginPath();
       ctx.arc(16, -41, 49, -1.15, 0.55);
       ctx.strokeStyle = color;
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 6;
+      ctx.stroke();
+      ctx.strokeStyle = '#fff8e8';
+      ctx.lineWidth = 2;
       ctx.stroke();
     } else if (fighter.element === 'air') {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
+      // Broad, open crescents follow the palm or rising foot.
       ctx.beginPath();
-      if (style.trail === 'rise') ctx.arc(1, -29, 40, 0.5, -1.15, true);
-      else ctx.arc(contact[0] - 3, contact[1], 13, -1.1, 1.1);
+      if (style.trail === 'rise') ctx.arc(1, -29, 43, 0.55, -1.2, true);
+      else {
+        ctx.moveTo(x - 40, y + 16);
+        ctx.bezierCurveTo(x + 20, y + 20, x + 21, y - 23, x - 31, y - 17);
+      }
+      ctx.strokeStyle = '#c8eee2';
+      ctx.lineWidth = cast ? 12 : 9;
       ctx.stroke();
-      line(ctx, [[contact[0] - 26, contact[1] + 7], [contact[0] - 7, contact[1] + 3]], '#fffae9', 3);
-      line(ctx, [[contact[0] - 32, contact[1] - 4], [contact[0] - 11, contact[1] - 4]], color, 2);
+      ctx.strokeStyle = '#fffdf0';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x - 7, y - 1, cast ? 26 : 21, -1.05, 1.1);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      line(ctx, [[x - 49, y - 5], [x - 23, y - 5]], color, 2);
+      line(ctx, [[x - 42, y + 8], [x - 19, y + 8]], '#fffdf0', 3);
+      if (cast) {
+        ctx.beginPath();
+        ctx.arc(3, -30, 43, 2.35, 4.65);
+        ctx.strokeStyle = '#fffdf0';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+      }
     } else if (fighter.element === 'water') {
+      // A continuous ribbon bends around the fighter, then snaps toward the hand.
+      ctx.beginPath();
+      if (style.trail === 'pull') {
+        ctx.moveTo(45, -19);
+        ctx.bezierCurveTo(66, -45, 24, -65, x + 2, y);
+      } else {
+        ctx.moveTo(-23, -15);
+        ctx.bezierCurveTo(-43, -56, 23, -70, x + 3, y + 4);
+      }
+      ctx.strokeStyle = '#3586b5';
+      ctx.lineWidth = cast ? 11 : 8;
+      ctx.stroke();
+      ctx.strokeStyle = '#b8e7ee';
+      ctx.lineWidth = cast ? 6 : 4;
+      ctx.stroke();
+      ctx.strokeStyle = '#f0fcf5';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
       if (style.trail === 'freeze') {
         for (let i = 0; i < 3; i += 1) {
-          const x = contact[0] + 7 + i * 5;
-          const y = contact[1] + (i - 1) * 10;
-          polygon(ctx, [[x - 3, y], [x + 4, y - 5], [x + 8, y], [x + 3, y + 4]], '#d8f1fa', color, 1);
+          const px = x + 5 + i * 5;
+          const py = y + (i - 1) * 11;
+          polygon(ctx, [[px - 4, py], [px + 3, py - 8], [px + 10, py], [px + 3, py + 5]], '#d8f1fa', color, 1.5);
         }
       } else {
-        ctx.beginPath();
-        if (style.trail === 'pull') {
-          ctx.moveTo(43, -23);
-          ctx.bezierCurveTo(60, -43, 22, -59, contact[0] + 2, contact[1]);
-        } else {
-          ctx.moveTo(-7, -60);
-          ctx.bezierCurveTo(48, -59, 59, -30, contact[0], contact[1] + 5);
+        for (let i = 0; i < 3; i += 1) {
+          const px = x + 8 + i * 5;
+          const py = y - 14 + i * 12;
+          circle(ctx, px, py, 3 - i * 0.4, '#c9eff3', color, 1);
         }
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 5;
-        ctx.stroke();
-        ctx.strokeStyle = '#dff5f1';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
       }
     } else if (fighter.element === 'earth') {
       if (style.trail === 'slam') {
         ctx.beginPath();
-        ctx.ellipse(contact[0], 0, 28, 9, 0, Math.PI, Math.PI * 2);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 4;
+        ctx.ellipse(x, 0, 38, 11, 0, Math.PI, Math.PI * 2);
+        ctx.strokeStyle = '#c4b176';
+        ctx.lineWidth = 7;
         ctx.stroke();
-        for (let i = 0; i < 3; i += 1) {
-          const x = contact[0] - 25 + i * 24;
-          polygon(ctx, [[x - 4, -2], [x - 2, -11 - i % 2 * 4], [x + 4, -7], [x + 5, -1]], '#bda76d', INK, 1);
+        line(ctx, [[x - 37, 1], [x - 18, 6], [x - 4, 2], [x + 13, 7], [x + 39, 2]], '#8b794e', 2);
+        for (let i = 0; i < 5; i += 1) {
+          const px = x - 33 + i * 16;
+          const height = 11 + (i % 3) * 6;
+          polygon(ctx, [[px - 6, -2], [px - 4, -height], [px + 2, -height - 3], [px + 7, -8], [px + 6, -1]], '#b59f65', '#7b7951', 1.5);
         }
       } else {
-        polygon(ctx, [[contact[0] - 25, contact[1] - 7], [contact[0] + 6, contact[1] - 3], [contact[0] + 9, contact[1] + 2], [contact[0] - 23, contact[1] + 7]], '#c1a165');
-        line(ctx, [[contact[0] - 26, contact[1] + 9], [contact[0] - 9, contact[1] + 6]], '#f8e8ba', 3);
+        polygon(ctx, [[x - 13, y - 10], [x + 6, y - 11], [x + 14, y - 2], [x + 9, y + 9], [x - 13, y + 7], [x - 20, y - 1]], '#b9a475', '#77794d', 1.5);
+        line(ctx, [[x - 9, y - 6], [x + 4, y - 6], [x + 8, y - 1]], '#f2dfac', 3);
+        line(ctx, [[x - 11, y + 1], [x - 1, y + 2], [x + 3, y + 7]], '#8b794e', 1.5);
+        for (let i = 0; i < 3; i += 1) {
+          const px = x - 25 - i * 9;
+          const py = y + (i % 2 ? -10 : 10);
+          polygon(ctx, [[px - 3, py], [px, py - 4], [px + 5, py - 1], [px + 2, py + 4]], '#b9a475', '#8b794e', 1);
+        }
       }
+      if (cast) line(ctx, [[-27, 0], [-15, -3], [-2, 1], [11, -2], [29, 0]], '#9b8a59', 3);
     } else {
-      polygon(ctx, [[contact[0] + 7, contact[1]], [contact[0] - 4, contact[1] - 7], [contact[0] - 33, contact[1] - 11], [contact[0] - 19, contact[1] - 2], [contact[0] - 39, contact[1] + 4], [contact[0] - 7, contact[1] + 6]], color);
-      line(ctx, [[contact[0] - 22, contact[1]], [contact[0] + 2, contact[1]]], '#ffe0a0', 3);
+      // Sharp flame tongues trail the limb, with a small bright contact core.
+      ctx.beginPath();
+      ctx.moveTo(x + 14, y);
+      ctx.bezierCurveTo(x + 6, y - 17, x - 24, y - 10, x - 46, y - 22);
+      ctx.lineTo(x - 30, y - 5);
+      ctx.lineTo(x - 53, y + 2);
+      ctx.lineTo(x - 27, y + 8);
+      ctx.lineTo(x - 39, y + 19);
+      ctx.bezierCurveTo(x - 15, y + 10, x + 6, y + 16, x + 14, y);
+      ctx.fillStyle = '#d95d36';
+      ctx.fill();
+      polygon(ctx, [[x + 10, y], [x - 10, y - 9], [x - 27, y - 8], [x - 17, y - 1], [x - 36, y + 5], [x - 7, y + 7]], '#f3a34f');
+      polygon(ctx, [[x + 7, y], [x - 4, y - 4], [x - 19, y + 1], [x - 4, y + 4]], '#fff3ba');
+      if (style.trail === 'kick') {
+        ctx.beginPath();
+        ctx.arc(7, -30, 38, 1.1, -0.65, true);
+        ctx.strokeStyle = '#ed9b47';
+        ctx.lineWidth = 5;
+        ctx.stroke();
+      }
+      for (let i = 0; i < 3; i += 1) {
+        const px = x - 33 - i * 10;
+        const py = y + (i % 2 ? 19 : -17);
+        line(ctx, [[px, py], [px - 5, py + (i % 2 ? 3 : -3)]], '#d96c3f', 2);
+      }
     }
     ctx.restore();
   }
@@ -920,7 +1065,7 @@ export class Renderer {
     }
   }
 
-  drawProjectile(projectile, time) {
+  drawProjectile(projectile, time, reducedMotion = false) {
     const ctx = this.ctx;
     const r = projectile.r || 9;
     const color = elementColor(projectile.element);
@@ -929,7 +1074,7 @@ export class Renderer {
     ctx.translate(projectile.x, projectile.y);
     ctx.rotate(angle);
     if (projectile.kind === 'weapon') {
-      ctx.rotate(time * (projectile.weapon === 'spear' ? 0 : 9));
+      ctx.rotate(reducedMotion ? 0 : time * (projectile.weapon === 'spear' ? 0 : 9));
       this.drawHeldWeapon(projectile.weapon || 'staff', [-23, 0], [23, 0]);
       ctx.restore();
       return;
@@ -938,7 +1083,14 @@ export class Renderer {
     circle(ctx, 0, 0, r * 2.2, color);
     ctx.globalAlpha = 1;
     if (projectile.element === 'earth') {
-      ctx.rotate(time * 5);
+      if (!reducedMotion) {
+        for (let i = 0; i < 3; i += 1) {
+          const x = -r * (1.8 + i * 0.7);
+          const y = (i % 2 ? -1 : 1) * r * 0.5;
+          polygon(ctx, [[x - 3, y], [x, y - 4], [x + 3, y], [x, y + 3]], '#b7aa78');
+        }
+        ctx.rotate(time * 5);
+      }
       polygon(ctx, [[-r, -r * 0.6], [-r * 0.2, -r], [r * 0.85, -r * 0.7], [r, r * 0.2], [r * 0.3, r], [-r * 0.8, r * 0.8]], '#aab27a', INK, 2);
       line(ctx, [[-r * 0.5, -r * 0.4], [r * 0.2, -r * 0.55], [r * 0.5, 0]], '#e5dfb7', 2);
     } else if (projectile.element === 'fire') {
@@ -954,6 +1106,14 @@ export class Renderer {
       ctx.fill();
       line(ctx, [[-r * 0.6, -r * 0.35], [r * 0.3, -r * 0.45]], '#e8f7f0', 2);
       circle(ctx, -r * 3.3, 0, 2, color);
+      if (!reducedMotion) {
+        ctx.beginPath();
+        ctx.moveTo(-r * 4.2, r * 0.3);
+        ctx.bezierCurveTo(-r * 3, -r * 0.9, -r * 2.5, r * 0.8, -r * 1.4, 0);
+        ctx.strokeStyle = '#90cbdc';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
     } else {
       ctx.strokeStyle = color;
       ctx.lineWidth = 3;
@@ -985,6 +1145,10 @@ export class Renderer {
   drawEffect(effect, reducedMotion = false) {
     const ctx = this.ctx;
     const remaining = Math.min(1, Math.max(0, effect.life / (effect.maxLife || 0.6)));
+    if (effect.kind === 'signature') {
+      this.drawSignature(effect, remaining, reducedMotion);
+      return;
+    }
     if (effect.kind === 'impact' || effect.kind === 'slash') {
       const radius = (effect.r || effect.radius || 19) * (effect.heavy ? 1.3 : 1);
       const size = radius * (reducedMotion ? 0.7 : 0.6 + (1 - remaining) * 0.8);
@@ -992,6 +1156,9 @@ export class Renderer {
       ctx.translate(effect.x, effect.y);
       ctx.scale(effect.direction < 0 ? -1 : 1, 1);
       ctx.globalAlpha = remaining * (reducedMotion ? 0.7 : 0.95);
+      if (effect.kind === 'impact' && effect.element && effect.impactKind === 'hit' && !reducedMotion) {
+        this.drawElementImpact(effect.element, size, remaining, effect.heavy);
+      }
       if (effect.kind === 'slash') {
         ctx.beginPath();
         ctx.arc(-size * 0.6, 0, size, -1, 1);
@@ -1039,6 +1206,170 @@ export class Renderer {
     ctx.strokeStyle = '#fffbea';
     ctx.lineWidth = 2;
     ctx.stroke();
+    ctx.restore();
+  }
+
+  drawSignature(effect, remaining, reducedMotion) {
+    const ctx = this.ctx;
+    const element = effect.element;
+    const color = elementColor(element);
+    const radius = effect.r || 235;
+    const age = 1 - remaining;
+    const reach = radius * (reducedMotion ? 0.9 : 0.25 + smooth(age) * 0.75);
+    const groundY = effect.groundY ?? effect.y + 30;
+    ctx.save();
+    ctx.translate(effect.x, groundY);
+    ctx.globalAlpha = remaining * 0.8;
+    if (reducedMotion) {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, reach, reach * 0.42, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      elementGlyph(ctx, element, 0, -90, 21, color, 2);
+    } else if (element === 'air') {
+      // Open, rising rings make the cyclone legible without filling its center.
+      for (let i = 0; i < 4; i += 1) {
+        const width = reach * (0.56 + i * 0.13);
+        const turn = age * 3.3 + i * 0.8;
+        ctx.beginPath();
+        ctx.ellipse(0, -8 - i * 25, width, 16 + width * 0.2, -0.07, turn, turn + Math.PI * 1.65);
+        ctx.strokeStyle = i % 2 ? '#fffdf0' : '#88c5b4';
+        ctx.lineWidth = 8 - i;
+        ctx.stroke();
+        ctx.strokeStyle = i % 2 ? '#7db8a8' : '#f8fff0';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      for (const direction of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(direction * reach * 0.55, 12);
+        ctx.bezierCurveTo(direction * reach, -24, direction * reach * 0.22, -52, direction * reach * 0.87, -96);
+        ctx.strokeStyle = '#e7f9e9';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+      }
+    } else if (element === 'water') {
+      ctx.beginPath();
+      ctx.ellipse(0, 1, reach, reach * 0.35, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = '#8bc9df';
+      ctx.lineWidth = 9;
+      ctx.stroke();
+      ctx.strokeStyle = '#effff6';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      for (const direction of [-1, 1]) {
+        ctx.save();
+        ctx.scale(direction, 1);
+        ctx.beginPath();
+        ctx.moveTo(reach * 0.15, 12);
+        ctx.bezierCurveTo(reach * 0.44, 20, reach * 0.55, -50, reach * 0.87, -56);
+        ctx.bezierCurveTo(reach * 1.08, -64, reach * 1.01, -23, reach * 0.84, -29);
+        ctx.bezierCurveTo(reach * 0.76, -33, reach * 0.84, -43, reach * 0.9, -39);
+        ctx.strokeStyle = '#398bb8';
+        ctx.lineWidth = 13;
+        ctx.stroke();
+        ctx.strokeStyle = '#9addeb';
+        ctx.lineWidth = 7;
+        ctx.stroke();
+        ctx.strokeStyle = '#f0fff8';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        for (let i = 0; i < 3; i += 1) circle(ctx, reach * (0.7 + i * 0.11), -67 - i % 2 * 10, 3 + i, '#d7f6ee', '#62aecb', 1);
+        ctx.restore();
+      }
+    } else if (element === 'earth') {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, reach, reach * 0.38, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = '#b4a06a';
+      ctx.lineWidth = 6;
+      ctx.stroke();
+      for (let i = 0; i < 8; i += 1) {
+        const angle = i * Math.PI / 4;
+        const x = Math.cos(angle) * reach * 0.86;
+        const y = Math.sin(angle) * reach * 0.34;
+        const height = (36 + i % 3 * 17) * Math.min(1, age * 7 + 0.3);
+        const width = 11 + i % 2 * 4;
+        line(ctx, [[x * 0.62, y * 0.6 + 4], [x * 0.8 + 7, y * 0.75], [x, y]], '#8e8053', 2);
+        polygon(ctx, [[x - width, y], [x - width * 0.7, y - height * 0.8], [x - 1, y - height], [x + width, y - height * 0.68], [x + width + 3, y]], '#b6a170', '#7c794f', 2);
+        polygon(ctx, [[x - 1, y - height], [x + width, y - height * 0.68], [x + width + 3, y], [x + 1, y]], '#9b8a5e');
+        line(ctx, [[x - width * 0.6, y - height * 0.75], [x - 1, y - height * 0.9]], '#e8d7a5', 3);
+      }
+    } else {
+      ctx.beginPath();
+      ctx.ellipse(0, -2, reach, reach * 0.42, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ed9a48';
+      ctx.lineWidth = 10;
+      ctx.stroke();
+      ctx.strokeStyle = '#ffedb0';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      for (let i = 0; i < 10; i += 1) {
+        const angle = i * Math.PI / 5;
+        const x = Math.cos(angle) * reach * 0.94;
+        const y = Math.sin(angle) * reach * 0.4;
+        const height = 27 + i % 3 * 9;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle + Math.PI / 2);
+        ctx.beginPath();
+        ctx.moveTo(-10, 5);
+        ctx.bezierCurveTo(-22, -12, -3, -height * 0.6, 2, -height);
+        ctx.bezierCurveTo(15, -height * 0.7, 4, -12, 16, -16);
+        ctx.bezierCurveTo(17, 3, 5, 11, -10, 5);
+        ctx.fillStyle = '#db653a';
+        ctx.fill();
+        polygon(ctx, [[-6, 3], [-4, -11], [3, -height * 0.6], [7, -9], [9, 2], [1, 6]], '#f4ad54');
+        line(ctx, [[0, 2], [2, -11]], '#fff0b7', 3);
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  }
+
+  drawElementImpact(element, size, remaining, heavy) {
+    const ctx = this.ctx;
+    const color = elementColor(element);
+    const age = 1 - remaining;
+    ctx.save();
+    ctx.globalAlpha *= 0.85;
+    if (element === 'air') {
+      for (let i = 0; i < 2; i += 1) {
+        ctx.beginPath();
+        ctx.ellipse(size * 0.15, 0, size * (0.8 + i * 0.25), size * (1 + i * 0.4), -0.3, -1.3, 1.3);
+        ctx.strokeStyle = i ? color : '#f8fff2';
+        ctx.lineWidth = i ? 2 : heavy ? 5 : 3;
+        ctx.stroke();
+      }
+    } else {
+      for (let i = 0; i < (heavy ? 5 : 4); i += 1) {
+        const angle = (i - (heavy ? 2 : 1.5)) * 0.72;
+        const distance = size * (0.85 + age * 0.7);
+        const x = Math.cos(angle) * distance;
+        const y = Math.sin(angle) * distance;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle + (element === 'earth' ? age * 2 : 0));
+        if (element === 'water') {
+          const r = (heavy ? 6 : 4) * remaining + 2;
+          ctx.beginPath();
+          ctx.moveTo(-r * 2, 0);
+          ctx.bezierCurveTo(r, -r * 1.5, r * 2, r * 1.5, -r * 2, 0);
+          ctx.fillStyle = '#87c8df';
+          ctx.fill();
+          line(ctx, [[-r * 0.3, -r * 0.2], [r * 0.4, -r * 0.2]], '#f0fcf5', 2);
+        } else if (element === 'earth') {
+          const r = heavy ? 7 : 5;
+          polygon(ctx, [[-r, -r * 0.6], [r * 0.2, -r], [r, 0], [r * 0.4, r * 0.8], [-r * 0.8, r * 0.5]], '#b5a371', '#817e51', 1.2);
+          line(ctx, [[-r * 0.4, -r * 0.4], [r * 0.2, -r * 0.6]], '#e9d8a1', 2);
+        } else {
+          const r = heavy ? 9 : 6;
+          polygon(ctx, [[r * 1.6, 0], [-r * 0.9, -r * 0.6], [-r * 0.3, 0], [-r, r * 0.5]], '#e2743d');
+          line(ctx, [[-r * 0.2, 0], [r * 0.8, 0]], '#ffdfa0', 2);
+        }
+        ctx.restore();
+      }
+    }
     ctx.restore();
   }
 

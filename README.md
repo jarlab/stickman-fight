@@ -20,6 +20,7 @@ Open **http://127.0.0.1:5173** in a desktop browser. No `npm install`, game edit
 | Double-tap left/right | Run while the direction remains held |
 | Space | Jump; press again in the air for a double jump |
 | Shift | Directional dodge / air dash |
+| Shift + direction near landing / while down | Recovery roll; no energy cost |
 | J | Tap with each jab's recovery; a recent tap queues the next strike |
 | J while holding an enemy | Punch once; tap late in recovery to queue another punch |
 | J while running / airborne | Running attack / aerial attack |
@@ -41,6 +42,8 @@ Tap **J** toward the end of each jab to keep attacking. One recent input is reme
 After a melee hit connects, **K** or **L** can cancel during its follow-up window if you have enough energy and the power is ready. Air can jump or dash out of a confirmed hit; Fire can dash. These elemental options are deliberate additions to the LF2-inspired jab rhythm. Commands such as **I → right → J** remember their ordered steps without a time limit; a conflicting fresh input or a second **I** clears the pending sequence.
 
 After an enemy staggers and shows stars, approach unarmed and press **E** to grab. Press **J** to punch without releasing your grip. Each punch has startup, a single impact and full recovery; a late J or U queues the next punch or throw. Turn left or right, then press **U** to throw; hold up/down with U to aim through depth. The flying body can knock down multiple opponents, then takes damage on landing. **E** releases without throwing. You stand still and remain vulnerable while holding someone; they escape after a short time, and guardians break free faster. Punches do not renew the hold. Enemies can catch you after making you dizzy, pause, punch once and throw you. Other enemies stop starting attacks while you are held or thrown; landing leads into the normal protected knockdown recovery.
+
+**Recovery rolls:** tap **Shift + a direction** just before landing or while knocked down. You briefly settle, then roll across the floor or into another depth lane. The roll carries you through a crowd, protects its opening, and has a short vulnerable finish. Direction is committed; attacks cannot cancel it. A near-landing tap uses the normal short input buffer, while an early airborne tap expires. Throw landing damage still applies before recovery. Waiting for the normal get-up remains available.
 
 Contact briefly holds the two fighters while the surrounding crowd keeps moving. Quick, connected jabs build stagger pressure and step forward during recovery; leaving a gap lets pressure drain. Sustained pressure can make an opponent dizzy, then knock them down. Projectiles hold their victim without stopping the caster.
 
@@ -65,7 +68,7 @@ Normal runs have three lives and no time limit. Easy/normal/hard adjust enemy st
 
 Enemies line up with your lane before striking, move around blocked approaches, and spread to both sides when there is room. Easy, Normal and Hard allow one, two and three simultaneous attack commitments respectively; waiting fighters reposition and rotate into the fight. Dodging through depth leaves a committed attack open to punishment. Air pursues aerial targets, Water favors shots and counters, Earth waits for close punishments, and Fire closes aggressively. Enemies check energy and clear shooting lanes, and wait for you to rise after a knockdown.
 
-Settings, best scores, furthest stages and completed runs save in this browser's local storage by mode/difficulty. Active fights restart after reload. Optional synthesized sound distinguishes landed hits, heavy impacts, blocks, parries and landings; all art is drawn in code.
+Settings, best scores, furthest stages and completed runs save in this browser's local storage by mode/difficulty. Active fights restart after reload. Optional synthesized sound distinguishes landed hits, heavy impacts, blocks, parries and landings; all art is drawn in code. Distinct martial stances, casting windups, air crescents, water ribbons, stone fists and flame lashes make each element read differently. Confirmed hits add elemental splashes and stronger local impact cues. Signatures produce cyclones, curling tidal crests, stone columns and flame novas. Reduced motion removes the roll spin, gathering orbit and extra debris while keeping clear action silhouettes and simple signature outlines.
 
 ## Development
 
@@ -93,3 +96,5 @@ The [LF2 enemy AI investigation](docs/lf2-ai-investigation.md) records native ta
 The [LF2 grab and throw investigation](docs/lf2-grab-investigation.md) records the native dizzy-state catches, grip budget, thrown-body attacks and separate landing injury behind our E/U adaptation.
 
 The [LF2 held-punch and enemy-grab investigation](docs/lf2-grab-punch-investigation.md) records single-contact grip strikes, their startup/recovery, shared AI action inputs, and the limits of the recovered enemy policy.
+
+The [LF2 knockdown and rolling investigation](docs/lf2-recovery-investigation.md) distinguishes native aerial recovery, ground rolling and get-up protection from our directional roll after knockdown.
