@@ -1,9 +1,8 @@
 import { ARENAS, ELEMENTS } from './data.js';
+import { drawFighterBody, clothDrive, KO_POSE, KO_BOX, INK, PAPER, FLASH } from './fighter-art.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
-const INK = '#263b3c';
-const PAPER = '#fff8e8';
 const COLORS = { air: '#459d91', water: '#4c8fc1', earth: '#82964e', fire: '#dc7251' };
 const PALETTES = {
   air: { sky: '#e7eee5', horizon: '#f7eed8', far: '#d1ddd3', mid: '#b3c9bd', near: '#88ab9c', stone: '#e4ddbd', side: '#a7b4a0', accent: '#5a9380' },
@@ -60,6 +59,22 @@ function hazardPath(ctx, hazard) {
 }
 
 const POSE_JOINTS = ['hip', 'shoulder', 'head', 'rearKnee', 'rearFoot', 'frontKnee', 'frontFoot', 'rearElbow', 'rearHand', 'elbow', 'hand'];
+const POSE_BOX = [0, 0, 0, 0];
+// Pose-unit box around a drawn body: its joints plus room for cloth, headgear, fists and a
+// held weapon (a spear tip reaches ~45 units past the fist).
+function poseBox(pose, pad = 50) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const key of POSE_JOINTS) {
+    const p = pose[key];
+    if (!p) continue;
+    if (p[0] < x0) x0 = p[0];
+    if (p[0] > x1) x1 = p[0];
+    if (p[1] < y0) y0 = p[1];
+    if (p[1] > y1) y1 = p[1];
+  }
+  POSE_BOX[0] = x0 - pad; POSE_BOX[1] = y0 - pad; POSE_BOX[2] = x1 + pad; POSE_BOX[3] = y1 + pad;
+  return POSE_BOX;
+}
 const clamp01 = value => Math.max(0, Math.min(1, value));
 const smooth = value => { const t = clamp01(value); return t * t * (3 - 2 * t); };
 const mix = (a, b, t) => a + (b - a) * t;
@@ -769,7 +784,7 @@ export class Renderer {
     const depth = groundDepth(entity);
     const height = Math.max(0, entity.z || depth - entity.y || 0);
     const scale = (entity.h || 66) / 66;
-    const radius = kind === 'pickup' ? (entity.kind === 'crate' ? 25 : 17) : kind === 'projectile' ? 14 : (entity.recoveryRoll ? 25 : entity.knockdown > 0 ? 31 : 22) * scale;
+    const radius = kind === 'pickup' ? (entity.kind === 'crate' ? 25 : 17) : kind === 'projectile' ? 14 : (entity.recoveryRoll ? 25 : entity.knockdown > 0 || kind === 'corpse' ? 31 : 22) * scale;
     const fade = Math.max(0.08, 0.2 - height / 1500);
     ctx.save();
     ctx.globalAlpha = fade * (kind === 'corpse' ? Math.min(1, entity.life || 1) : 1);
@@ -831,8 +846,7 @@ export class Renderer {
     ctx.restore();
   }
 
-  drawHeldWeapon(kind, start, end) {
-    const ctx = this.ctx;
+  drawHeldWeapon(kind, start, end, ctx = this.ctx) {
     if (kind === 'crate') {
       const x = (start[0] + end[0]) / 2;
       const y = (start[1] + end[1]) / 2;
@@ -870,7 +884,16 @@ export class Renderer {
     const sameAction = previous?.action === fighter.action;
     const transitionFrom = sameAction ? previous?.transitionFrom : fighter.action && previous?.action && time - previous.time < 0.15 ? previous.pose : null;
     const { pose, stroke, style, recoil, speed } = fighterPose(fighter, visualTime, reducedMotion, transitionFrom);
-    this.fighterAnimations.set(fighter, { action: fighter.action, time, visualTime, pose, transitionFrom });
+    // Signed travel: negative while backpedalling, so cloth lifts less. The cloth drive eases
+    // towards its target on the visual clock so it does not snap when stroke or recoil jumps.
+    const travel = (fighter.vx || 0) * facing < 0 ? -speed : speed;
+    const knockedDown = (fighter.knockdown || 0) > 0 && !fighter.recoveryRoll;
+    const downAirborne = knockedDown && (fighter.z || 0) > 4;
+    // A knocked-down body's cloth streams while it flies and settles once it lands.
+    const driveTarget = knockedDown ? (downAirborne ? 0.8 : 0) : clothDrive(travel, stroke, recoil);
+    const drive = Number.isFinite(previous?.drive)
+      ? mix(previous.drive, driveTarget, 1 - Math.exp(-(visualTime - previous.visualTime) * 12)) : driveTarget;
+    this.fighterAnimations.set(fighter, { action: fighter.action, time, visualTime, pose, transitionFrom, drive });
     const guarding = Boolean(fighter.guard);
     const dizzy = (fighter.stun || 0) > 0 && fighter.hitType === 'dizzy' && fighter.grabbedBy == null;
     const frozen = (fighter.frozen || 0) > 0;
@@ -878,7 +901,7 @@ export class Renderer {
     const isPlayer = fighter.team === 'player';
     const hitAge = (fighter.hitMax || 0.35) - (fighter.hitReact || 0);
     const flash = !reducedMotion && fighter.hitReact > 0 && hitAge < 0.045;
-    const bodyColor = flash ? '#fffdf1' : color;
+    const bodyColor = flash ? FLASH : color;
     const flutter = reducedMotion || frozen ? 0 : visualTime;
     const contactShake = !reducedMotion && hitLag && fighter.hitReact > 0 ? (Math.floor(time * 30) % 2 ? 2 : -2) : 0;
 
@@ -886,13 +909,17 @@ export class Renderer {
     else this.drawLaunchTrail(fighter, visualTime, reducedMotion);
     if (isBoss) this.drawBossAura(fighter, visualTime, reducedMotion);
 
-    if ((fighter.knockdown || 0) > 0 && !fighter.recoveryRoll) {
-      const airborne = (fighter.z || 0) > 4;
-      const prone = airborne ? 1 : smooth(fighter.knockdown / 0.18);
-      const rotation = airborne ? Math.PI * 0.38 * (fighter.hitDirection || facing) + (reducedMotion ? 0 : Math.sin(visualTime * 9) * 0.18) : Math.PI / 2 * facing * prone;
-      this.drawCorpse({ ...fighter, x: fighter.x + contactShake - (airborne ? 0 : facing * 13 * prone), y: fighter.y - 8 - 7 * prone, rotation, life: 1 });
+    if (knockedDown) {
+      const prone = downAirborne ? 1 : smooth(fighter.knockdown / 0.18);
+      // One side for the whole knockdown (contact, flight, landing, getting up): the body falls
+      // away from the hit, so the head never swaps ends between frames.
+      const fall = Math.sign(fighter.hitDirection || 0) || facing;
+      const rotation = downAirborne ? Math.PI * 0.38 * fall + (reducedMotion ? 0 : Math.sin(visualTime * 9) * 0.18) : Math.PI / 2 * fall * prone;
+      // Live knockdowns are opaque; only corpses are ghosted.
+      this.drawCorpse({ x: fighter.x + contactShake, y: fighter.y, z: fighter.z, h, rotation, fall, alpha: 1,
+        element: fighter.element, type: fighter.type, bossPhase: fighter.bossPhase, flutter, drive });
       if (isPlayer) polygon(ctx, [[fighter.x - 5, fighter.y - 36], [fighter.x + 5, fighter.y - 36], [fighter.x, fighter.y - 30]], color, INK, 1);
-      this.drawFighterHealth(fighter, airborne ? h : 28);
+      this.drawFighterHealth(fighter, downAirborne ? h : 28);
       return;
     }
 
@@ -959,80 +986,25 @@ export class Renderer {
     }
     if ((fighter.invulnerable || 0) > 0) ctx.globalAlpha = reducedMotion ? 0.8 : 0.74 + Math.sin(visualTime * 18) * 0.1;
     this.drawGather(fighter, pose, reducedMotion);
-    const { hip, shoulder, head, rearFoot, frontFoot, rearKnee, frontKnee, rearElbow, rearHand, elbow, hand } = pose;
-    line(ctx, [hip, rearKnee, rearFoot], '#415451', 7);
-    line(ctx, [[rearFoot[0] - 2, rearFoot[1]], [rearFoot[0] + 5, rearFoot[1]]], INK, 6);
-    line(ctx, [hip, frontKnee, frontFoot], INK, 7);
-    line(ctx, [[frontFoot[0] - 1, frontFoot[1]], [frontFoot[0] + 6, frontFoot[1]]], INK, 6);
-
-    line(ctx, [shoulder, rearElbow, rearHand], '#415451', 6);
-    circle(ctx, rearHand[0], rearHand[1], 3, PAPER, INK, 1.4);
-    line(ctx, [hip, shoulder], INK, isBoss ? 12 : 9);
-
-    if (fighter.element === 'earth') {
-      polygon(ctx, [[shoulder[0] - 8, shoulder[1] - 2], [shoulder[0] + 8, shoulder[1] - 2], [hip[0] + 9, hip[1]], [hip[0] - 9, hip[1]]], bodyColor, INK, 2);
-      line(ctx, [[hip[0] - 7, hip[1] - 2], [hip[0] + 7, hip[1] - 2]], '#dfd6a0', 3);
-    } else if (fighter.element === 'water') {
-      polygon(ctx, [[shoulder[0] - 6, shoulder[1]], [shoulder[0] + 6, shoulder[1]], [hip[0] + 10, hip[1] + 5], [hip[0] - 10, hip[1] + 5]], bodyColor, INK, 2);
-      line(ctx, [[shoulder[0] - 5, shoulder[1] + 1], [hip[0] + 6, hip[1] + 1]], '#e6f1e7', 3);
-    } else {
-      polygon(ctx, [[shoulder[0] - 5, shoulder[1] - 1], [shoulder[0] + 6, shoulder[1]], [hip[0] + 6, hip[1]], [hip[0] - 7, hip[1]]], bodyColor, INK, 2);
-      line(ctx, [[shoulder[0] - 4, shoulder[1] + 1], [hip[0] + 4, hip[1] - 2]], '#f4dbab', 3);
-    }
-    if (isBoss) {
-      const empowered = fighter.bossPhase > 1;
-      const trim = empowered ? '#ffdf93' : '#d4b66f';
-      if (fighter.element === 'earth') {
-        for (const side of [-1, 1]) polygon(ctx, [[shoulder[0] + side * 7, shoulder[1] - 5], [shoulder[0] + side * 18, shoulder[1] - 2], [shoulder[0] + side * 16, shoulder[1] + 8], [shoulder[0] + side * 7, shoulder[1] + 5]], bodyColor, trim, 2);
-      } else if (fighter.element === 'water') {
-        line(ctx, [[shoulder[0] - 11, shoulder[1] - 3], [shoulder[0], shoulder[1] + 7], [shoulder[0] + 11, shoulder[1] - 3]], '#d4f2e7', 6);
-        line(ctx, [[shoulder[0] - 8, shoulder[1] + 6], [hip[0] - 15, hip[1] + 10]], color, 7);
-      } else if (fighter.element === 'air') {
-        line(ctx, [[shoulder[0] - 6, shoulder[1]], [shoulder[0] - 25, shoulder[1] - 7], [shoulder[0] - 37, shoulder[1] + 2]], '#e9f2d8', 6);
-        line(ctx, [[hip[0] - 8, hip[1]], [hip[0] - 19, hip[1] + 12]], color, 5);
-      } else {
-        polygon(ctx, [[shoulder[0] - 12, shoulder[1] - 3], [shoulder[0] - 5, shoulder[1] + 8], [shoulder[0] + 2, shoulder[1] - 1], [shoulder[0] + 10, shoulder[1] + 6], [shoulder[0] + 13, shoulder[1] - 5]], '#8e4233', trim, 1.5);
-      }
-      line(ctx, [[hip[0] - 8, hip[1]], [hip[0] + 9, hip[1]]], trim, empowered ? 4 : 2.5);
-    }
-
-    // Headwear and silhouettes distinguish the four premade fighters.
-    circle(ctx, head[0], head[1], 9.5, PAPER, INK, 2.6);
-    if (fighter.element === 'air') {
-      line(ctx, [[head[0] - 9, head[1] - 3], [head[0] + 8, head[1] - 3]], color, 4);
-      line(ctx, [[head[0] - 9, head[1] - 3], [head[0] - 16, head[1] - 6 + Math.sin(flutter * 8) * 2]], color, 3);
-      line(ctx, [[shoulder[0] - 4, shoulder[1] + 2], [shoulder[0] - 17 - speed * 6, shoulder[1] + Math.sin(flutter * 7) * 3]], color, 4);
-    } else if (fighter.element === 'water') {
-      ctx.beginPath();
-      ctx.arc(head[0], head[1] - 1, 10, Math.PI, Math.PI * 1.95);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 5;
-      ctx.stroke();
-      line(ctx, [[head[0] - 7, head[1] + 7], [head[0] + 7, head[1] + 7]], '#d8e6e3', 5);
-      line(ctx, [[head[0] - 7, head[1] + 7], [head[0] - 15, head[1] + 14 + Math.sin(flutter * 6) * 2]], color, 5);
-    } else if (fighter.element === 'earth') {
-      polygon(ctx, [[head[0] - 11, head[1] - 3], [head[0] - 7, head[1] - 12], [head[0] + 7, head[1] - 12], [head[0] + 11, head[1] - 3]], color, INK, 2);
-      line(ctx, [[head[0] - 12, head[1] - 3], [head[0] + 11, head[1] - 3]], INK, 2);
-    } else {
-      polygon(ctx, [[head[0] - 9, head[1] - 1], [head[0] - 10, head[1] - 7], [head[0] - 3, head[1] - 12], [head[0] + 5, head[1] - 10], [head[0] + 9, head[1] - 4]], INK);
-      circle(ctx, head[0] - 4, head[1] - 14, 4, INK);
-      line(ctx, [[head[0] - 7, head[1] - 10], [head[0] - 1, head[1] - 10]], color, 3);
-    }
-    if (recoil > 0.3) line(ctx, [[head[0] + 2, head[1] - 1], [head[0] + 5, head[1] + 1]], INK, 1.5);
-    else circle(ctx, head[0] + 4, head[1], 1.3, INK);
-    line(ctx, [[head[0] + 2, head[1] + 4], [head[0] + 5, head[1] + 4]], '#6b6653', 1);
-
-    if (fighter.weapon) {
-      const axis = [Math.cos(pose.weaponAngle), Math.sin(pose.weaponAngle)];
-      this.drawHeldWeapon(fighter.weapon, [hand[0] - axis[0] * 23, hand[1] - axis[1] * 23], [hand[0] + axis[0] * 29, hand[1] + axis[1] * 29]);
-    }
-    line(ctx, [shoulder, elbow, hand], INK, 6);
-    line(ctx, [[elbow[0] + 1, elbow[1]], [hand[0] - 2, hand[1]]], bodyColor, 4);
-    circle(ctx, hand[0], hand[1], 3.5, PAPER, INK, 1.5);
-    if (!fighter.weapon && stroke > 0.3 && (fighter.element === 'air' || fighter.element === 'water')) line(ctx, [[hand[0] + 1, hand[1] - 4], [hand[0] + 1, hand[1] + 4]], PAPER, 3);
+    const { hip, shoulder, hand } = pose;
+    const holding = fighter.weapon ? target => {
+      const ax = Math.cos(pose.weaponAngle), ay = Math.sin(pose.weaponAngle);
+      this.drawHeldWeapon(fighter.weapon, [hand[0] - ax * 23, hand[1] - ay * 23], [hand[0] + ax * 29, hand[1] + ay * 29], target);
+    } : null;
+    const metrics = this.drawBody(pose, {
+      element: fighter.element, color, bodyColor, isBoss, empowered: fighter.bossPhase > 1,
+      flutter, speed: travel, stroke, recoil, drive, dizzy, frozen, beforeFrontArm: holding,
+    }, ctx.globalAlpha, poseBox(pose));
+    // Metrics are in pose units and reused by the next fighter: convert to world space now.
+    const bodyTop = fighter.y + metrics.top * scale;
+    const bodyLeft = fighter.x + (facing > 0 ? metrics.left : -metrics.right) * scale;
+    const bodyRight = fighter.x + (facing > 0 ? metrics.right : -metrics.left) * scale;
+    const headX = fighter.x + contactShake + metrics.headX * scale * facing;
+    const headR = metrics.headR * (fighter.element === 'earth' ? 1.9 : 1);
     if (fighter.armor) {
-      line(ctx, [[shoulder[0] - 10, shoulder[1] + 1], [shoulder[0] - 10, shoulder[1] + 11]], '#d9b65e', 3);
-      line(ctx, [[shoulder[0] + 10, shoulder[1] + 1], [shoulder[0] + 10, shoulder[1] + 11]], '#d9b65e', 3);
+      const plate = metrics.torso + 3;
+      line(ctx, [[shoulder[0] - plate, shoulder[1] + 1], [shoulder[0] - plate, shoulder[1] + 11]], '#d9b65e', 3);
+      line(ctx, [[shoulder[0] + plate, shoulder[1] + 1], [shoulder[0] + plate, shoulder[1] + 11]], '#d9b65e', 3);
       circle(ctx, hip[0], hip[1] - 8, 3, '#ecd08b', INK, 1);
     }
     if ((fighter.counterReady || 0) > 0) {
@@ -1043,15 +1015,19 @@ export class Renderer {
       ctx.restore();
     }
     this.drawAttackTrail(fighter, pose, style, stroke, reducedMotion);
-    if (isBoss) {
-      polygon(ctx, [[head[0] - 7, head[1] - 14], [head[0] - 10, head[1] - 21], [head[0] - 3, head[1] - 18], [head[0] + 1, head[1] - 24], [head[0] + 5, head[1] - 18], [head[0] + 11, head[1] - 21], [head[0] + 8, head[1] - 14]], '#e8bf68', INK, 1.5);
-    }
     ctx.restore();
 
     if (frozen) {
       ctx.save();
       ctx.globalAlpha = 0.3;
-      polygon(ctx, [[fighter.x - 19 * scale, fighter.y + 1], [fighter.x - 22 * scale, fighter.y - h * 0.55], [fighter.x - 12 * scale, fighter.y - h - 6], [fighter.x + 12 * scale, fighter.y - h - 1], [fighter.x + 23 * scale, fighter.y - h * 0.48], [fighter.x + 19 * scale, fighter.y + 1]], '#c5eafb', '#5f9fb5', 2);
+      // The block keeps its old shape and grows only where the drawn body (kasa brim, flame
+      // spikes, fists) would poke out of it.
+      const left = Math.max(22 * scale, fighter.x - bodyLeft + 4);
+      const right = Math.max(23 * scale, bodyRight - fighter.x + 4);
+      const top = Math.min(fighter.y - h - 6, bodyTop - 5);
+      const tall = fighter.y - top - 6;
+      polygon(ctx, [[fighter.x - left * 19 / 22, fighter.y + 1], [fighter.x - left, fighter.y - tall * 0.55], [fighter.x - left * 12 / 22, top],
+        [fighter.x + right * 12 / 23, top + 5], [fighter.x + right, fighter.y - tall * 0.48], [fighter.x + right * 19 / 23, fighter.y + 1]], '#c5eafb', '#5f9fb5', 2);
       ctx.globalAlpha = 0.8;
       line(ctx, [[fighter.x - 12 * scale, fighter.y - h * 0.5], [fighter.x - 2 * scale, fighter.y - h * 0.78]], '#efffff', 2);
       line(ctx, [[fighter.x + 7 * scale, fighter.y - 8], [fighter.x + 13 * scale, fighter.y - h * 0.4]], '#efffff', 2);
@@ -1061,10 +1037,12 @@ export class Renderer {
     if (dizzy && !frozen) {
       ctx.save();
       ctx.fillStyle = '#dfab4d';
+      // Orbit just above the drawn head(gear), wide enough to clear a kasa brim.
+      const orbit = Math.max(15, headR + 6) * scale;
       for (let i = 0; i < 3; i += 1) {
         const angle = (reducedMotion ? 0 : visualTime * 4) + i * 2.1;
-        const x = fighter.x + Math.cos(angle) * 17 * scale;
-        const y = fighter.y - h - 7 + Math.sin(angle) * 5;
+        const x = headX + Math.cos(angle) * orbit;
+        const y = bodyTop - 6 + Math.sin(angle) * 5;
         polygon(ctx, [[x, y - 3], [x + 3, y], [x, y + 3], [x - 3, y]], '#d6a047');
       }
       ctx.restore();
@@ -1079,7 +1057,8 @@ export class Renderer {
         ctx.restore();
       }
     }
-    this.drawFighterHealth(fighter, fighter.recoveryRoll ? h * 0.62 : h);
+    if (fighter.recoveryRoll) this.drawFighterHealth(fighter, h * 0.62);
+    else this.drawFighterHealth(fighter, h, bodyTop);
   }
 
   drawRecoveryTrail(fighter, reducedMotion) {
@@ -1332,13 +1311,14 @@ export class Renderer {
     ctx.restore();
   }
 
-  drawFighterHealth(fighter, h) {
+  // top: optional world y of the drawn headgear; the bar stays at least 6px above it.
+  drawFighterHealth(fighter, h, top = Infinity) {
     const ctx = this.ctx;
     const isBoss = fighter.type === 'boss';
     if (fighter.team !== 'player' && fighter.maxHp > 0 && (fighter.hp < fighter.maxHp || isBoss)) {
       const width = isBoss ? 72 : 36;
-      const barY = fighter.y - h - (isBoss ? 33 : 15);
-      ctx.fillStyle = '#263b3c';
+      const barY = Math.min(fighter.y - h - (isBoss ? 33 : 15), top - 6);
+      ctx.fillStyle = INK;
       ctx.fillRect(fighter.x - width / 2, barY, width, 5);
       ctx.fillStyle = elementColor(fighter.element);
       ctx.fillRect(fighter.x - width / 2 + 1, barY + 1, (width - 2) * Math.max(0, fighter.hp / fighter.maxHp), 3);
@@ -1668,26 +1648,71 @@ export class Renderer {
     ctx.restore();
   }
 
+  // Corpses and knockdowns: the fighter's own build lying down. fall (+-1) is the side the
+  // head falls towards. The body is flipped by it, so at rotation fall * PI/2 its limbs and
+  // cloth (local +x) face the floor, and it is lifted and shifted by how far it lies, so a
+  // lying body rests on the floor centred over its shadow. Corpses are ghosted (alpha <= 0.85).
   drawCorpse(corpse) {
     const ctx = this.ctx;
-    const color = elementColor(corpse.element);
     const scale = (corpse.h || 66) / 66;
+    const fall = corpse.fall < 0 ? -1 : 1;
+    const rotation = corpse.rotation || 0;
+    const lie = clamp01(Math.sin(rotation) * fall);
+    const alpha = corpse.alpha ?? Math.min(0.85, Math.max(0, corpse.life));
+    if (!(alpha > 0)) return;
+    // Cloth streams while the body is up in the air and settles as it comes down (no snap).
+    const drive = Number.isFinite(corpse.drive) ? corpse.drive : 0.8 * clamp01(((corpse.z || 0) - 2) / 18);
     ctx.save();
-    ctx.globalAlpha = Math.min(0.85, Math.max(0, corpse.life));
-    ctx.translate(corpse.x, corpse.y);
-    ctx.rotate(corpse.rotation || 0);
-    ctx.scale(scale, scale);
-    line(ctx, [[0, -12], [-11, -1], [-16, 8]], INK, 6);
-    line(ctx, [[0, -12], [10, 1], [17, 4]], INK, 6);
-    line(ctx, [[0, -32], [-15, -28], [-20, -36]], INK, 5);
-    line(ctx, [[0, -32], [14, -24], [22, -29]], INK, 5);
-    line(ctx, [[0, -12], [0, -32]], INK, 9);
-    line(ctx, [[0, -15], [0, -30]], color, 6);
-    circle(ctx, 0, -43, 9, PAPER, INK, 2.5);
-    line(ctx, [[-8, -46], [7, -46]], color, 3);
-    line(ctx, [[2, -43], [5, -40]], INK, 1);
-    line(ctx, [[5, -43], [2, -40]], INK, 1);
+    ctx.translate(corpse.x - fall * 13 * lie * scale, corpse.y - (8 + 7 * lie) * scale);
+    ctx.rotate(rotation);
+    ctx.scale(scale * fall, scale);
+    this.drawBody(KO_POSE, {
+      element: corpse.element, color: elementColor(corpse.element), isBoss: corpse.type === 'boss', empowered: corpse.bossPhase > 1,
+      ko: true, recoil: 1, flutter: corpse.flutter || 0, drive,
+    }, alpha, KO_BOX);
     ctx.restore();
+  }
+
+  // Draws a fighter body at the current transform. A translucent body (invulnerability blink,
+  // ghosted corpse) is drawn opaque into one reused offscreen layer and composited once: drawn
+  // directly, each of its ~20 overlapping fills would blend on its own and the parts would show
+  // through each other (the neck through the face, joints doubled). box: [x0, y0, x1, y1]
+  // around the body in the current local (pose) units. Returns drawFighterBody's metrics.
+  drawBody(pose, options, alpha, box) {
+    const ctx = this.ctx;
+    if (alpha >= 1 || typeof document === 'undefined') return drawFighterBody(ctx, pose, options);
+    const m = ctx.getTransform();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < 4; i += 1) {
+      const x = i & 1 ? box[2] : box[0], y = i & 2 ? box[3] : box[1];
+      const px = m.a * x + m.c * y + m.e, py = m.b * x + m.d * y + m.f;
+      if (px < x0) x0 = px;
+      if (px > x1) x1 = px;
+      if (py < y0) y0 = py;
+      if (py > y1) y1 = py;
+    }
+    x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0));
+    x1 = Math.min(this.canvas.width, Math.ceil(x1)); y1 = Math.min(this.canvas.height, Math.ceil(y1));
+    const w = x1 - x0, hgt = y1 - y0;
+    if (w <= 0 || hgt <= 0) return drawFighterBody(ctx, pose, options); // off screen: metrics only
+    if (!this.layer) {
+      this.layer = document.createElement('canvas');
+      this.layerCtx = this.layer.getContext('2d');
+    }
+    const layer = this.layer, lc = this.layerCtx;
+    if (layer.width < w) layer.width = w;
+    if (layer.height < hgt) layer.height = hgt;
+    lc.setTransform(1, 0, 0, 1, 0, 0);
+    lc.globalAlpha = 1;
+    lc.clearRect(0, 0, w, hgt);
+    lc.setTransform(m.a, m.b, m.c, m.d, m.e - x0, m.f - y0);
+    const metrics = drawFighterBody(lc, pose, options);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(layer, 0, 0, w, hgt, x0, y0, w, hgt);
+    ctx.restore();
+    return metrics;
   }
 
   drawEdgeDetails(state, key) {
