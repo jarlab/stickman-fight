@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#182f31" />
+    <meta name="description" content="Four elements. One arena. A keyboard-only elemental stick-fighting game." />
+    <title>Fourfold — Elemental Arena</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='%23182f31' d='M20 1 39 20 20 39 1 20Z'/%3E%3Cpath stroke='%23f4f1e9' stroke-width='2' d='M20 9v22M9 20h22M12 12l16 16M28 12 12 28'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="masthead">
+        <a class="brand" href="./" aria-label="Fourfold home">
+          <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 2 38 20 20 38 2 20Z"/><path d="M20 9v22M9 20h22M12 12l16 16M28 12 12 28"/></svg>
+          <span><span class="wordmark">FOURFOLD<span class="wordmark-dot">.</span></span><span class="brand-subtitle">ELEMENTAL ARENA</span></span>
+        </a>
+        <div class="header-actions">
+          <span class="local-label"><span></span> SINGLE PLAYER</span>
+          <button id="sound-button" class="utility-button" type="button" aria-pressed="false">Sound <span>off</span></button>
+          <button id="motion-button" class="utility-button" type="button" aria-pressed="false">Motion <span>full</span></button>
+          <button id="pause-button" class="utility-button pause-button" type="button" disabled>Pause <kbd>Esc</kbd></button>
+        </div>
+      </header>
+
+      <main>
+        <section class="setup" aria-label="Choose your game">
+          <fieldset class="element-field">
+            <legend>01 <span>Your element</span></legend>
+            <div class="element-options">
+              <button type="button" class="element-choice" data-element="air" aria-pressed="true"><span class="element-symbol">≋</span><span>Air</span></button>
+              <button type="button" class="element-choice" data-element="water" aria-pressed="false"><span class="element-symbol">◡</span><span>Water</span></button>
+              <button type="button" class="element-choice" data-element="earth" aria-pressed="false"><span class="element-symbol">◇</span><span>Earth</span></button>
+              <button type="button" class="element-choice" data-element="fire" aria-pressed="false"><span class="element-symbol">⋀</span><span>Fire</span></button>
+            </div>
+          </fieldset>
+          <label class="select-field" for="mode-select"><span class="field-label">02 <span>Game mode</span></span><select id="mode-select"><option value="survival">Survival</option><option value="training">Training</option><option value="tournament">Tournament</option><option value="challenge">Challenge</option><option value="story">Story</option></select></label>
+          <label class="select-field" for="arena-select"><span class="field-label">03 <span>Arena</span></span><select id="arena-select"><option value="air">Sky Monastery</option><option value="water">Moonwater Court</option><option value="earth">Stone Garden</option><option value="fire">Ember Foundry</option></select></label>
+          <label class="select-field difficulty-field" for="difficulty-select"><span class="field-label">04 <span>Difficulty</span></span><select id="difficulty-select"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option><option value="crazy">Crazy</option></select></label>
+          <label class="select-field enemy-count-field" for="enemyCount-select"><span class="field-label">05 <span>Enemies per wave</span></span><select id="enemyCount-select" aria-describedby="enemy-count-help"><option value="auto">Auto (mode default)</option><option value="1">1 enemy</option><option value="2">2 enemies</option><option value="3">3 enemies</option><option value="4">4 enemies</option><option value="5">5 enemies</option><option value="6">6 enemies</option><option value="7">7 enemies</option><option value="8">8 enemies</option><option value="9">9 enemies</option><option value="10">10 enemies</option><option value="11">11 enemies</option><option value="12">12 enemies</option></select></label>
+          <button id="start-button" class="primary-button setup-start" type="button">Start run <span aria-hidden="true">↗</span></button>
+          <p id="enemy-count-help" class="setup-note">Auto follows each mode’s progression. Counts include bosses; personal bests are saved separately for each count.</p>
+        </section>
+
+        <section class="arena-shell" aria-label="Game arena">
+          <div class="hud">
+            <div class="fighter-hud">
+              <div class="fighter-medallion" id="player-symbol" aria-hidden="true">≋</div>
+              <div class="vitals">
+                <div class="vital-label"><strong id="player-name">Air</strong><span id="health-value">100 / 100</span></div>
+                <div class="health-track" id="health-meter" role="progressbar" aria-label="Health" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><span id="health-fill"></span></div>
+                <div class="energy-line"><div class="energy-track" id="energy-meter" role="progressbar" aria-label="Elemental energy" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><span id="energy-fill"></span></div><span id="energy-value">100 energy</span></div>
+              </div>
+            </div>
+            <div class="round-hud"><span id="mode-label">SURVIVAL</span><strong id="stage-label">READY WHEN YOU ARE</strong><span id="objective-label">A boss every third wave.</span></div>
+            <div class="run-hud"><div><span class="hud-caption">LIVES</span><strong id="lives-value" aria-label="3 lives">● ● ●</strong></div><div class="score-hud"><span class="hud-caption">SCORE</span><strong id="score-value">00000</strong><span id="combo-value" class="hit-streak" hidden></span></div></div>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="game-canvas" width="1280" height="720" tabindex="0" aria-label="Fourfold fighting arena. WASD or arrows move in four directions across the arena floor. Match an enemy's lane to hit. Space jumps, J chains attacks or punches a held enemy. Up and J launches; after a hit, Space and J chases into an aerial combo. E grabs a nearby dizzy enemy or releases them, U throws a held enemy or weapon. Shift and a direction rolls after a knockdown. Full controls follow the arena."></canvas>
+            <div id="boss-hud" class="boss-hud" hidden><div><strong id="boss-name">ELEMENTAL MASTER</strong><span id="boss-health-value"></span></div><div class="boss-track"><span id="boss-health-fill"></span></div><p id="boss-hint"></p></div>
+            <div id="intro-overlay" class="intro-overlay">
+              <div class="intro-panel">
+                <span class="eyebrow">FIND YOUR FLOW</span>
+                <h1>Four elements.<br />A little chaos.</h1>
+                <p id="intro-description">Outlast the crowd, own the arena, and face an elemental master every third wave.</p>
+                <div class="run-rules"><span>3 lives</span><span>No time limit</span><span>All classes unlocked</span></div>
+                <button id="intro-start-button" class="primary-button" type="button">Enter the arena <kbd>Enter</kbd></button>
+                <p class="intro-tip">Match their lane to land a hit.</p>
+              </div>
+            </div>
+            <div id="modal-overlay" class="modal-overlay" hidden>
+              <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-description" tabindex="-1">
+                <span id="modal-eyebrow" class="eyebrow">TAKE A BREATH</span>
+                <h2 id="modal-title">Paused.</h2>
+                <p id="modal-description">Your arena will be right here.</p>
+                <div id="result-stats" class="result-stats" hidden><div><span>Score</span><strong id="result-score">0</strong></div><div><span>Defeated</span><strong id="result-kills">0</strong></div><div><span>Best score</span><strong id="result-best">0</strong></div></div>
+                <div class="modal-actions"><button id="resume-button" class="primary-button" type="button">Keep fighting <kbd>Esc</kbd></button><button id="retry-button" class="primary-button" type="button" hidden>Try again <kbd>R</kbd></button><button id="menu-button" class="secondary-button" type="button">Change setup</button></div>
+                <div id="pause-settings" class="modal-settings"><button id="pause-sound-button" class="utility-button" type="button" aria-pressed="false">Sound <span>off</span></button><button id="pause-motion-button" class="utility-button" type="button" aria-pressed="false">Motion <span>full</span></button></div>
+                <p class="modal-note">Settings and personal bests save on this browser.</p>
+              </section>
+            </div>
+            <div class="arena-caption"><span id="arena-name">SKY MONASTERY</span><span id="weapon-label">UNARMED · E PICK UP / DRINK</span></div>
+          </div>
+          <div class="arena-footer"><span id="ability-description"><strong>Air</strong> · Stay mobile. Turn the crowd into a whirlwind.</span><span id="record-label">PERSONAL BEST —</span></div>
+        </section>
+
+        <section class="controls" aria-label="Keyboard controls">
+          <div class="controls-heading"><h2>Make your move.</h2><p>Match their lane to land a hit.</p></div>
+          <div class="control-group"><span class="control-label">MOVE</span><div><kbd>WASD</kbd><span>/ arrows move in depth</span><kbd>Space</kbd><span>double jump</span></div><div><span>Double-tap ← / → to run</span><kbd>Shift</kbd><span>directional dodge / recovery roll</span></div></div>
+          <div class="control-group"><span class="control-label">FIGHT</span><div><kbd>J</kbd><span>jab / finisher / grab punch</span><kbd>K</kbd><span id="shot-label">air shot</span><kbd>L</kbd><span id="burst-label">signature</span></div><div><kbd>I</kbd><span>guard / parry</span><kbd>E</kbd><span>grab / release / pick up</span><kbd>U</kbd><span>throw enemy / weapon</span></div></div>
+          <p class="command-help"><span>Tap <kbd>J</kbd> late in recovery; stagger, then finish.</span><span><kbd>↑ + J</kbd> launch · 8 energy. After contact: <kbd>Space + J</kbd>, then tap <kbd>J</kbd> to link air strikes.</span><span><kbd>E</kbd> near a dizzy enemy to grab; <kbd>J</kbd> to punch, turn + <kbd>U</kbd> to throw. Enemies can grab you when dizzy.</span><span><kbd>J</kbd> → <kbd>K / L</kbd> after contact cancels into powers.</span><span>Run + <kbd>J</kbd> dash attack</span><span><kbd>I</kbd> → <kbd>← / →</kbd> → <kbd>J</kbd> cast</span><span><kbd>I</kbd> → <kbd>↑</kbd> → <kbd>J</kbd> signature</span></p>
+        </section>
+        <footer class="page-footer"><span>FOURFOLD / PLAYABLE PROTOTYPE</span><span id="save-status">Local play. Your bests stay with you.</span><span>KEYBOARD REQUIRED</span></footer>
+      </main>
+      <p id="announcer" class="sr-only" role="status" aria-live="polite"></p>
+      <noscript><p class="noscript">Enable JavaScript to enter the arena.</p></noscript>
+    </div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
