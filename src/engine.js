@@ -44,7 +44,10 @@ export class Game {
   makeFighter(team, element, x, y, type = 'fighter') {
     const spec = ELEMENTS[element];
     const boss = type === 'boss';
-    const hp = team === 'player' ? spec.hp : (boss ? 320 + this.state.wave * 32 : type === 'dummy' ? 180 : 48 + this.state.wave * 4) * this.difficulty.health;
+    // Ordinary opponents use the same elemental health as a playable fighter.
+    // Difficulty changes their tactics and damage; it doesn't undo this parity.
+    const hp = boss ? (320 + this.state.wave * 32) * this.difficulty.health
+      : type === 'dummy' ? 180 : spec.hp;
     return {
       id: ++this.nextId, team, type, element, x, y, depth: y, z: 0, vDepth: 0, vx: 0, vy: 0,
       w: boss ? 46 : 28, h: boss ? 104 : 66, hp, maxHp: hp,
