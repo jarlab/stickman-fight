@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Game } from '../src/engine.js';
-import { ELEMENTS } from '../src/data.js';
+import { ELEMENTS, MOVEMENT } from '../src/data.js';
 
 const STEP = 1 / 120;
 
@@ -224,9 +224,10 @@ test('a ranged fighter does not choose to cast through an ally occupying its fir
 test('the reaction window lets a rapidly retreating player escape an immediate jab', () => {
   const game = arena();
   enemy(game, 'earth', 560);
-  game.state.player.vx = ELEMENTS.air.speed;
+  // A rapid retreat is a run at the slower traversal pace, not an ordinary walk.
+  game.state.player.vx = ELEMENTS.air.speed * MOVEMENT.runMultiplier;
   const observations = watchActions(game);
-  advance(game, .3, observations.sample, { right: true });
+  advance(game, .3, observations.sample, { right: true, run: true });
   assert.equal(observations.actions.filter(entry => entry.action.kind === 'melee').length, 0,
     'the enemy reacts to the escaped player instead of jabbing at the initial close position');
 });

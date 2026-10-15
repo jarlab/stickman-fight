@@ -1,4 +1,4 @@
-import { ELEMENTS, COMBAT, ARENAS, MODES, DIFFICULTIES } from './data.js';
+import { ELEMENTS, MOVEMENT, COMBAT, ARENAS, MODES, DIFFICULTIES } from './data.js';
 import { GRAVITY, clamp, moveFighter } from './physics.js';
 import { EnemyAI } from './enemy-ai.js';
 import { Grapples } from './grapples.js';
@@ -21,7 +21,6 @@ export class Game {
     };
     this.seed = config.seed ?? 61721;
     this.nextId = 0;
-    this.difficulty = DIFFICULTIES[settings.difficulty];
     this.enemyAI = new EnemyAI();
     this.grapples = new Grapples();
     this.bosses = new BossDirector();
@@ -48,8 +47,8 @@ export class Game {
     const spec = ELEMENTS[element];
     const boss = type === 'boss';
     // Ordinary opponents use the same elemental health as a playable fighter.
-    // Difficulty changes their tactics and damage; it doesn't undo this parity.
-    const hp = boss ? (320 + this.state.wave * 32) * this.difficulty.health
+    // Difficulty changes decisions, not fighter stats or action clocks.
+    const hp = boss ? 320 + this.state.wave * 32
       : type === 'dummy' ? 180 : spec.hp;
     return {
       id: ++this.nextId, team, type, element, x, y, depth: y, z: 0, vDepth: 0, vx: 0, vy: 0,
@@ -283,17 +282,17 @@ export class Game {
       const direction = Number(!!input.right) - Number(!!input.left);
       const depthDirection = Number(!!input.down) - Number(!!input.up);
       if (direction && !f.action) f.facing = direction;
-      const pursuit = { easy: .65, normal: .82, hard: .9, crazy: .95 }[this.state.settings.difficulty];
-      let speed = spec.speed * (f.team === 'enemy' ? pursuit * this.difficulty.speed : 1);
+      let speed = spec.speed;
       f.running = !!input.run && !!direction && f.grounded && !f.guard && !f.action;
-      if (f.running) speed *= 1.65;
       if (direction && depthDirection) speed *= Math.SQRT1_2;
       if (f.slow > 0) speed *= 0.5;
       if (f.guard) speed *= 0.32;
       if (f.action) speed *= 0.5;
       if (f.dashTime <= 0) {
-        f.vx += (direction * speed - f.vx) * Math.min(1, dt * (f.grounded ? 12 : 6));
-        f.vDepth += (depthDirection * speed * 0.58 - f.vDepth) * Math.min(1, dt * 12);
+        const forwardSpeed = speed * (f.running ? MOVEMENT.runMultiplier : 1);
+        const depthSpeed = speed * (f.running ? MOVEMENT.runDepth : MOVEMENT.walkDepth);
+        f.vx += (direction * forwardSpeed - f.vx) * Math.min(1, dt * (f.grounded ? 12 : 6));
+        f.vDepth += (depthDirection * depthSpeed - f.vDepth) * Math.min(1, dt * 12);
       }
       this.consumeBuffer(f);
     } else {
@@ -391,7 +390,7 @@ export class Game {
     const roll = f.recoveryRoll;
     const next = Math.min(roll.duration, roll.t + dt);
     const progress = (roll.t + next) / (2 * roll.duration);
-    const speed = 720 * (1 - .75 * progress);
+    const speed = MOVEMENT.recoveryRollSpeed * (1 - .75 * progress);
     const diagonal = roll.direction && roll.depthDirection ? Math.SQRT1_2 : 1;
     f.vx = roll.direction * speed * diagonal;
     f.vDepth = roll.depthDirection * speed * .62 * diagonal;
@@ -497,7 +496,7 @@ export class Game {
       f.dashUsed = true;
       f.cooldowns.dash = f.element === 'air' ? .55 : .85;
       f.invulnerable = Math.max(f.invulnerable, .22);
-      const speed = f.element === 'air' ? 1000 : 820;
+      const speed = f.element === 'air' ? MOVEMENT.airDashSpeed : MOVEMENT.dashSpeed;
       f.vx = (direction || (depthDirection ? 0 : f.facing)) * speed;
       f.vDepth = depthDirection * speed * .55;
       if (direction && depthDirection) { f.vx *= Math.SQRT1_2; f.vDepth *= Math.SQRT1_2; }
@@ -552,8 +551,9 @@ export class Game {
     if (launcher) { f.cooldowns.launcher = .8; f.running = false; }
     let windup = move?.windup ?? (kind === 'burst' ? .2 : .1);
     if (f.team === 'enemy') {
-      const tell = { easy: .16, normal: .10, hard: .06, crazy: .04 }[this.state.settings.difficulty];
-      windup = (kind === 'melee' ? windup + (aerial ? tell * .35 : tell) : kind === 'burst' ? .85 : .55) * this.difficulty.aggression;
+      // The same attack always has the same readable commitment. Difficulty
+      // controls the AI's choice of when and where to use it.
+      windup = kind === 'melee' ? windup + (aerial ? .035 : .10) : kind === 'burst' ? .85 : .55;
     }
     const activeUntil = windup + (move?.active ?? .07);
     const duration = activeUntil + (move?.recovery ?? (kind === 'burst' ? .23 : .1));
@@ -714,7 +714,7 @@ export class Game {
       knockback = Math.max(knockback, 480);
       this.floater(target.x, target.y - target.h - 16, 'SHATTER', '#419da6');
     }
-    if (source?.team === 'enemy') amount *= this.difficulty.damage * (source.type === 'boss' ? 1.25 : 0.72);
+    if (source?.team === 'enemy') amount *= source.type === 'boss' ? 1.25 : 0.72;
     if (!blocked && !landing && !gripHit && !target.grounded && target.juggle > 0) amount /= 1 + target.juggle * .2;
     if (target.element === 'earth') { amount *= 0.86; knockback *= 0.75; }
     if (target.type === 'boss') knockback *= 0.55;

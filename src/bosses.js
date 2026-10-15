@@ -77,8 +77,7 @@ export class BossDirector {
     if (['wind-lane', 'ice-lance', 'flame-rush'].includes(move) && lane > 32) return false;
     const spec = MOVES[move];
     if (e.energy < spec.cost) return false;
-    const adjustment = { easy: .18, normal: 0, hard: -.05, crazy: -.1 }[s.settings.difficulty];
-    const windup = Math.max(.5, spec.windup + adjustment);
+    const windup = spec.windup;
     const direction = Math.sign(target.x - e.x) || e.facing;
     const action = { name: spec.name, move, hint: spec.hint, stage: 'windup', t: 0, windup,
       activeUntil: 0, duration: 0, originX: e.x, originDepth: e.depth, direction,
@@ -90,7 +89,7 @@ export class BossDirector {
     e.bossAction = action;
     e.bossMoves = (e.bossMoves ?? 0) + 1;
     const respite = e.bossPhase === 2 ? 1.05 : 1.6;
-    e.bossMoveAfter = s.time + action.duration + respite * (s.settings.difficulty === 'crazy' ? .7 : 1);
+    e.bossMoveAfter = s.time + action.duration + respite;
     e.energy -= spec.cost;
     e.facing = direction;
     e.vx = e.vDepth = 0;

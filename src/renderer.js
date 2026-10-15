@@ -178,7 +178,7 @@ function blendPose(a, b, amount) {
 function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
   const frozen = fighter.frozen > 0;
   const speed = frozen ? 0 : Math.min(1, Math.hypot(fighter.vx || 0, fighter.vDepth || fighter.vd || 0) / 240);
-  const phase = time * (fighter.running ? 18 : 14) + (Number(fighter.id) || 0);
+  const phase = time * (fighter.running ? 14 : 10) + (Number(fighter.id) || 0);
   const stride = fighter.grounded && !fighter.stun && !frozen ? Math.sin(phase) * speed : 0;
   const bob = reducedMotion || frozen ? 0 : Math.sin(time * 3.5) * (speed < 0.1 ? 0.7 : 0);
   const lean = speed * 4;

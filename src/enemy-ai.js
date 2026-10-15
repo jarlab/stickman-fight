@@ -1,14 +1,14 @@
-import { COMBAT, ELEMENTS } from './data.js';
+import { COMBAT, ELEMENTS, MOVEMENT } from './data.js';
 import { clamp } from './physics.js';
 import { isCommitted as bossCommitted } from './bosses.js';
 
 // LF2-informed individual decisions; formation, turns and detours are our
 // original adaptations for readable crowds in this smaller arena.
 const LEVELS = {
-  easy: { attackers: 1, reaction: .25, attackChance: .7, guardChance: .06, defense: .18, lead: 0, tempo: 1 },
-  normal: { attackers: 2, reaction: .17, attackChance: .92, guardChance: .34, defense: .8, lead: .12, tempo: .65 },
-  hard: { attackers: 3, reaction: .11, attackChance: 1, guardChance: .55, defense: 1, lead: .18, tempo: .43 },
-  crazy: { attackers: 4, reaction: .075, attackChance: 1, guardChance: .7, defense: 1, lead: .23, tempo: .3 },
+  easy: { attackers: 1, reaction: .25, attackChance: .7, guardChance: .06, defense: .18, lead: 0 },
+  normal: { attackers: 2, reaction: .17, attackChance: .92, guardChance: .34, defense: .8, lead: .12 },
+  hard: { attackers: 3, reaction: .11, attackChance: 1, guardChance: .55, defense: 1, lead: .18 },
+  crazy: { attackers: 4, reaction: .075, attackChance: 1, guardChance: .7, defense: 1, lead: .23 },
 };
 const STYLES = {
   air: { range: 108, shotRange: 380, shotChance: .16, retreat: .55, runAt: 350 },
@@ -92,7 +92,7 @@ export class EnemyAI {
         ai.rotationUntil = s.time + .6;
       }
       if (ai.hadAction && !e.action && !e.buffer) {
-        ai.rotationUntil = s.time + STYLES[e.element].retreat * level.tempo;
+        ai.rotationUntil = s.time + STYLES[e.element].retreat * .65;
       }
       ai.hadAction = !!e.action;
       if (Math.abs(p.x - e.x) < 110 && Math.abs(p.depth - e.depth) < 30) ai.mustClose = false;
@@ -174,7 +174,7 @@ export class EnemyAI {
         input.attack = true;
         input.attackDirection = e.facing;
         e.action.followupQueued = true;
-        e.aiTimer = .65 * game.difficulty.aggression;
+        e.aiTimer = .65;
       }
       // A confirmed dizzy hit can be followed with a small approach during its
       // recovery. Keep the committed facing and finish the whole action before
@@ -366,16 +366,17 @@ export class EnemyAI {
     // Stop before striking; direction is carried by the attack, not a chase step.
     input.left = input.right = input.up = input.down = input.run = false;
     ai.lastAttack = ai.lastTurn = s.time;
-    e.aiTimer = (.55 + game.random() * .55) * level.tempo * game.difficulty.aggression * (e.bossPhase === 2 ? .7 : 1);
+    e.aiTimer = (.55 + game.random() * .55) * .65;
 
     if (attack === 'special' || attack === 'throw') { ai.shotAfter = s.time + 3; ai.mustClose = true; }
     return input;
   }
 
   defenseInput(game, e, level) {
-    const { time, projectiles } = game.state, ai = e.ai;
+    const { time, projectiles, player: p, settings } = game.state, ai = e.ai;
     if (ai.defenseAfter > time || !e.grounded || e.energy < 8) return null;
-    let threat = null;
+    const expert = settings.difficulty === 'crazy';
+    const observed = [];
     for (const shot of projectiles) {
       const seenAt = this.projectileSeen.get(shot);
       if (shot.team === e.team || shot.life <= 0 || seenAt == null || time - seenAt < level.reaction) continue;
@@ -383,14 +384,25 @@ export class EnemyAI {
       if (!(impactIn > 0 && impactIn < .65)) continue;
       const depth = shot.depth + shot.vDepth * impactIn;
       const height = shot.z - shot.vy * impactIn - .5 * shot.gravity * impactIn * impactIn;
-      if (Math.abs(depth - e.depth) > shot.r + 18 || Math.abs(height - e.z - e.h * .55) > shot.r + e.h * .45) continue;
-      if (!threat || impactIn < threat.impactIn) threat = { shot, impactIn, depth };
+      if (Math.abs(height - e.z - e.h * .55) > shot.r + e.h * .45) continue;
+      observed.push({ shot, impactIn, depth });
     }
-    if (!threat) return null;
+    const threat = observed.filter(t => Math.abs(t.depth - e.depth) <= t.shot.r + 18)
+      .sort((a, b) => a.impactIn - b.impactIn)[0];
+    // An experienced fighter recognizes a committed, visible breaking stance.
+    // This reads the animated move after its observation delay, never inputs.
+    const action = p.action;
+    const guardBreak = expert && action?.kind === 'melee' && action.move?.guardBreak &&
+      action.t >= level.reaction && action.t < action.activeUntil &&
+      (e.x - p.x) * p.facing > 0 && Math.abs(p.x - e.x) < action.move.reach + 36 &&
+      Math.abs(p.depth - e.depth) < 36 && Math.abs(p.z - e.z) < 70;
+    if (!threat && !guardBreak) return null;
     ai.defenseAfter = time + (level.reaction > .2 ? 1.3 : .65);
     if (game.random() >= level.defense) return null;
-    const frontal = (threat.shot.x - e.x) * e.facing > 0;
-    if (frontal && ['earth', 'water'].includes(e.element) && e.energy >= 18 && ai.guardAfter <= time) {
+    const frontal = threat && (threat.shot.x - e.x) * e.facing > 0;
+    const crossfire = expert && observed.some(t => Math.abs(t.depth - e.depth) <= t.shot.r + 18 &&
+      (t.shot.x - e.x) * e.facing < 0);
+    if (!guardBreak && !crossfire && frontal && ['earth', 'water'].includes(e.element) && e.energy >= 18 && ai.guardAfter <= time) {
       // The threat scan accepts impacts up to .65 seconds away. Keep protection
       // through that predicted contact instead of dropping a slower shot at .5.
       ai.guardUntil = time + clamp(threat.impactIn + .08, .18, .73);
@@ -400,12 +412,28 @@ export class EnemyAI {
     }
     // Keep the lane choice for the whole dodge, including when a target changes
     // direction. Prefer space away from the projectile and avoid arena edges.
+    const impactIn = guardBreak ? Math.max(0, action.windup - action.t) : threat.impactIn;
+    const dash = impactIn < .28 && e.cooldowns.dash <= 0 && !e.dashUsed;
     ai.evadeDirection = e.depth < 445 ? 1 : e.depth > 610 ? -1 :
-      Math.sign(e.depth - threat.depth) || (e.id % 2 ? 1 : -1);
+      Math.sign(e.depth - (threat?.depth ?? p.depth)) || (e.id % 2 ? 1 : -1);
+    if (expert && observed.length > 1) {
+      // Compare both escape lanes against the whole observed spread. Predict
+      // ordinary movement conservatively, including acceleration and boundaries.
+      const risk = direction => observed.reduce((sum, t) => {
+        const walking = ELEMENTS[e.element].speed * MOVEMENT.walkDepth * Math.max(0, t.impactIn - .08);
+        const travel = dash ? Math.min(.17, t.impactIn) *
+          (e.element === 'air' ? MOVEMENT.airDashSpeed : MOVEMENT.dashSpeed) * .55 +
+          Math.max(0, t.impactIn - .17) * ELEMENTS[e.element].speed * MOVEMENT.walkDepth : walking;
+        const depth = clamp(e.depth + direction * travel, 405, 640);
+        return sum + Math.max(0, t.shot.r + 23 - Math.abs(depth - t.depth));
+      }, 0);
+      if (risk(-ai.evadeDirection) < risk(ai.evadeDirection)) ai.evadeDirection *= -1;
+    }
     ai.evadeX = 0;
-    ai.evadeUntil = time + .32;
+    ai.evadeUntil = time + clamp((guardBreak ? action.activeUntil - action.t : impactIn) + .12, .32, .77);
+    if (guardBreak) ai.counterUntil = ai.evadeUntil + .35;
     return { up: ai.evadeDirection < 0, down: ai.evadeDirection > 0,
-      dash: threat.impactIn < .28 && e.cooldowns.dash <= 0 && !e.dashUsed,
+      dash,
       attackDirection: 0, attackDepthDirection: ai.evadeDirection };
   }
 

@@ -54,8 +54,8 @@ test('Crazy runs every mode and keeps ordinary opponents at playable elemental h
 });
 
 test('natural twelve-enemy Crazy waves reach four commitments without exceeding them, including a boss', () => {
-  for (const [wave, seed] of [[1, 1], [3, 42]]) {
-    const game = new Game({ element: 'fire', mode: 'survival', difficulty: 'crazy', enemyCount: 12, seed });
+  for (const wave of [1, 3]) {
+    const game = new Game({ element: 'fire', mode: 'survival', difficulty: 'crazy', enemyCount: 12, seed: 42 });
     game.state.wave = wave - 1;
     game.start();
     game.state.player.invulnerable = 999;
@@ -102,30 +102,88 @@ test('each Crazy guardian naturally attacks, changes phase, and uses its signatu
   }
 });
 
-test('Crazy reacts and resumes pressure sooner than Hard while completing each missed strike', () => {
-  const results = {};
-  for (const difficulty of ['hard', 'crazy']) {
-    const { game, foe } = arena('fire', difficulty);
-    game.random = () => .5;
-    let previous = null;
-    const starts = [];
-    for (let frame = 0; frame < 360 && starts.length < 3; frame++) {
-      game.tick({}, STEP);
-      if (foe.action && foe.action !== previous) {
-        starts.push({ time: game.state.time, action: foe.action });
+const difficulties = ['easy', 'normal', 'hard', 'crazy'];
+
+test('the same enemy inputs produce identical movement, health and damage on every difficulty', () => {
+  for (const element of elements) {
+    const results = difficulties.map(difficulty => {
+      const { game, foe } = arena(element, difficulty);
+      foe.x = 250;
+      const positions = [];
+      // Supply identical visible decisions directly: this isolates the shared
+      // movement rules from the controller's deliberately different tactics.
+      for (const input of [{ right: true }, { right: true, run: true }, { up: true },
+        { right: true, down: true, run: true }, { dash: true, right: true }]) {
+        for (let frame = 0; frame < 36; frame++) {
+          game.updateFighter(foe, { ...input, dash: input.dash && frame === 0 }, STEP);
+        }
+        positions.push([foe.x, foe.depth, foe.z, foe.vx, foe.vDepth, foe.energy]);
       }
-      previous = foe.action;
+      const player = game.state.player;
+      player.invulnerable = 0;
+      const hp = player.hp;
+      assert.equal(game.damage(player, 20, -1, foe, { light: true, knockback: 0, lift: 0 }), true);
+      return { positions, maxHp: foe.maxHp, damage: hp - player.hp };
+    });
+    assert.ok(results[0].positions[0][0] > 250 && results[0].damage > 0);
+    for (let index = 1; index < results.length; index++) {
+      assert.deepEqual(results[index], results[0], `${element}: ${difficulties[index]} changes decisions, not physical advantages`);
     }
-    assert.equal(starts.length, 3, `${difficulty} sustains actual melee pressure`);
-    assert.ok(starts[0].time > STEP, 'newly perceived proximity retains a reaction delay');
-    for (let index = 0; index < 2; index++) {
-      assert.equal(starts[index].action.connected, false, 'the protected target makes this a whiff-recovery comparison');
-      assert.ok(starts[index + 1].time - starts[index].time >= starts[index].action.duration - STEP,
-        'higher difficulty cannot skip the visible recovery of a missed attack');
-    }
-    results[difficulty] = starts.map(s => s.time);
   }
-  assert.ok(results.crazy[0] < results.hard[0], 'Crazy initiates its first real strike sooner');
-  assert.ok(results.crazy[1] - results.crazy[0] < results.hard[1] - results.hard[0],
-    'Crazy re-engages sooner after the same missed strike');
+});
+
+test('difficulty never shortens an ordinary move, its attack cooldown or its completed recovery', () => {
+  for (const element of elements) {
+    for (const variant of ['melee', 'launcher', 'aerial', 'special', 'burst']) {
+      const results = difficulties.map(difficulty => {
+        const { game, foe } = arena(element, difficulty);
+        foe.x = 150;
+        if (variant === 'aerial') Object.assign(foe, { grounded: false, z: 500, y: 40 });
+        const kind = ['launcher', 'aerial'].includes(variant) ? 'melee' : variant;
+        assert.equal(game.startAction(foe, kind, variant === 'launcher'), true);
+        const action = foe.action;
+        const timing = { windup: action.windup, activeUntil: action.activeUntil,
+          duration: action.duration, cooldowns: { ...foe.cooldowns }, tell: foe.tell };
+        let frames = 0;
+        while (foe.action === action && frames < 240) {
+          game.updateFighter(foe, {}, STEP);
+          frames++;
+        }
+        assert.notEqual(foe.action, action, 'the committed move actually finishes');
+        assert.ok(action.t >= action.duration, 'a missed move retains its full recovery');
+        return { ...timing, frames };
+      });
+      for (let index = 1; index < results.length; index++) {
+        assert.deepEqual(results[index], results[0], `${element} ${variant}: ${difficulties[index]} keeps the same move timing`);
+      }
+    }
+  }
+});
+
+test('boss health, damage, warnings and technique reuse remain equal across difficulties and phases', () => {
+  for (const element of elements) {
+    for (const scenario of [{ distance: 120, phase: 1 }, { distance: 280, phase: 1 }, { distance: 120, phase: 2 }]) {
+      const results = difficulties.map(difficulty => {
+        const { game, foe: boss } = arena(element, difficulty, true);
+        game.state.player.x = boss.x + scenario.distance;
+        boss.bossPhase = scenario.phase;
+        if (element === 'air' && scenario.distance === 120) game.startAction(game.state.player, 'melee');
+        assert.equal(game.bosses.tryStart(game, boss), true);
+        const action = boss.bossAction;
+        const player = game.state.player;
+        player.invulnerable = 0;
+        const hp = player.hp;
+        assert.equal(game.damage(player, 20, -1, boss, { light: true, knockback: 0, lift: 0 }), true);
+        return { hp: boss.maxHp, damage: hp - player.hp, move: action.move,
+          windup: action.windup, activeUntil: action.activeUntil, duration: action.duration,
+          nextTechniqueAt: boss.bossMoveAfter,
+          hazards: game.state.bossHazards.map(h => ({ delay: h.delay, life: h.life, damage: h.damage,
+            x: h.x, depth: h.depth, rx: h.rx, rd: h.rd, height: h.height })) };
+      });
+      assert.ok(results[0].hazards.length > 0 && results[0].damage > 0);
+      for (let index = 1; index < results.length; index++) {
+        assert.deepEqual(results[index], results[0], `${element} phase ${scenario.phase}: ${difficulties[index]} keeps honest boss counterplay`);
+      }
+    }
+  }
 });
