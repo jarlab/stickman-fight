@@ -97,6 +97,7 @@ npm run check  # JavaScript syntax checks
 - `src/physics.js`: ground-plane movement, bounds and jump height.
 - `src/data.js`: classes, arenas and balance values.
 - `src/renderer.js`: Canvas scenes, fighters and effects.
+- `src/fighter-art.js`: Wuxia fighter bodies (`drawFighterBody`, `KO_POSE`) plus the metrics used to place overlays (HP bar, dizzy stars, armour, ice).
 - `src/input.js`: physical key state, press edges and directional command recognition.
 - `src/main.js`: fixed timestep, browser events, DOM HUD and local records.
 - `server.mjs`: localhost static server.

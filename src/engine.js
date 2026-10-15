@@ -13,7 +13,7 @@ const stories = ['The wind has gone silent.', 'The harbor has frozen over.', 'Th
 export class Game {
   constructor(config = {}) {
     const settings = {
-      element: config.element in ELEMENTS ? config.element : 'air',
+      element: Object.hasOwn(ELEMENTS, config.element) ? config.element : 'air',
       arena: config.arena in ARENAS ? config.arena : 'air',
       mode: config.mode in MODES ? config.mode : 'survival',
       difficulty: config.difficulty in DIFFICULTIES ? config.difficulty : 'normal',
@@ -936,7 +936,13 @@ export class Game {
       e.dead = true;
       s.kills++;
       s.score += e.type === 'boss' ? 1000 : 100;
-      s.corpses.push({ x: e.x, y: e.y, depth: e.depth, z: e.z, vx: e.vx || (e.facing * -180), vy: Math.min(e.vy, -260), rotation: 0, spin: (this.random() - 0.5) * 12, life: 2.8, element: e.element, h: e.h });
+      // The body topples away from the blow (fall = the side its head goes, as in a knockdown)
+      // and settles lying flat; one already lying keeps lying the same way.
+      const vx = e.vx || (e.facing * -180);
+      const down = e.knockdown > 0;
+      const fall = (down && Math.sign(e.hitDirection || 0)) || (vx < 0 ? -1 : 1);
+      s.corpses.push({ x: e.x, y: e.y, depth: e.depth, z: e.z, vx, vy: Math.min(e.vy, -260), fall, rotation: fall * Math.PI * (down && e.grounded ? 0.5 : 0.2),
+        settle: 4 + this.random() * 6, life: 2.8, element: e.element, h: e.h, type: e.type, bossPhase: e.bossPhase });
       this.floater(e.x, Math.min(e.y - e.h, 640), e.type === 'boss' ? 'GUARDIAN FALLEN' : 'KO', ELEMENTS[e.element].color);
       if (e.type === 'boss') { s.slowMotion = 0.7; s.shake = 10; }
       s.player.energy = Math.min(100, s.player.energy + 8);
@@ -996,9 +1002,10 @@ export class Game {
       c.vy += 1100 * dt;
       c.x = clamp(c.x + c.vx * dt, 40, 1240);
       c.z -= c.vy * dt;
-      if (c.z < 0) { c.z = 0; c.vy *= -0.3; c.vx *= 0.65; c.spin *= 0.7; }
+      if (c.z < 0) { c.z = 0; c.vy *= -0.3; c.vx *= 0.65; }
       c.y = c.depth - c.z;
-      c.rotation += c.spin * dt;
+      // Ease toward lying flat with the limbs to the floor (the renderer flips the body by fall).
+      c.rotation += (c.fall * Math.PI / 2 - c.rotation) * (1 - Math.exp(-c.settle * dt));
     }
     s.corpses = s.corpses.filter(c => c.life > 0 && c.y < 1000);
     for (const w of s.weapons) w.life -= dt;
