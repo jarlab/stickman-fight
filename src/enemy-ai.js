@@ -27,6 +27,9 @@ export class EnemyAI {
   constructor() {
     this.cornerSide = 0;
     this.projectileSeen = new WeakMap();
+    this.observedActions = new WeakSet();
+    this.recentAttacks = [];
+    this.guardSince = null;
   }
 
   update(game, dt) {
@@ -34,6 +37,15 @@ export class EnemyAI {
     const foes = s.enemies.filter(e => alive(e) && e.type !== 'dummy');
     const level = LEVELS[s.settings.difficulty];
     const p = s.player;
+    // Remember completed, visible commitments rather than reading player keys.
+    // Repeated casting creates a short-lived reason to flank and close distance.
+    if (p.action && p.action.t >= level.reaction && !this.observedActions.has(p.action)) {
+      this.observedActions.add(p.action);
+      this.recentAttacks.push({ kind: p.action.kind, time: s.time });
+    }
+    this.recentAttacks = this.recentAttacks.filter(a => s.time - a.time < 4);
+    const rangedPressure = this.recentAttacks.filter(a => a.kind === 'special' || a.kind === 'throw').length >= 2;
+    this.guardSince = p.guard ? (this.guardSince ?? s.time) : null;
     for (const shot of s.projectiles) {
       if (!this.projectileSeen.has(shot)) this.projectileSeen.set(shot, s.time);
     }
@@ -53,6 +65,7 @@ export class EnemyAI {
           motion: { vx: p.vx, vDepth: p.vDepth }, observeAt: s.time + level.reaction };
       }
       const ai = e.ai;
+      ai.rangedPressure = s.settings.difficulty !== 'easy' && rangedPressure;
       ai.think = Math.max(0, ai.think - dt);
       ai.airChasing = ai.airChaseUntil > s.time && alive(p) && p.z > 20 &&
         p.knockdown <= 0 && !p.thrown && p.grabbedBy == null && !disabled(e) &&
@@ -91,7 +104,12 @@ export class EnemyAI {
     const occupied = foes.filter(committed).length;
     const waiting = foes.filter(e => !committed(e) && !disabled(e) &&
       (e.ai.rotationUntil <= s.time || (!e.weapon && e.grounded && grabOpening(p))))
-      .sort((a, b) => a.ai.lastTurn - b.ai.lastTurn || distance(a, p) - distance(b, p) || a.id - b.id);
+      .sort((a, b) => {
+        // Expected time to engage plus bounded waiting credit. Far-away foes
+        // no longer reserve every slot while a nearby fighter watches.
+        const priority = e => distance(e, p) / 220 - Math.min(4, s.time - e.ai.lastTurn) * .45;
+        return priority(a) - priority(b) || a.id - b.id;
+      });
     for (const e of waiting.slice(0, Math.max(0, level.attackers - occupied))) e.ai.permit = true;
     for (const e of foes) e.ai.permitSince = e.ai.permit ? (e.ai.permitSince ?? s.time) : null;
     // Stable sides, then the oldest waiting fighter gets the nearest position.
@@ -180,6 +198,11 @@ export class EnemyAI {
     const leadDepth = canApproachGrab ? 0 : clamp(ai.motion.vDepth * level.lead, -24, 24);
     let goalX = clamp(p.x + leadX + ai.side * radius, 50, 1230);
     let goalDepth = clamp(p.depth + leadDepth + (front ? 0 : (ai.rank % 2 ? 1 : -1) * (35 + ai.rank * 12)), 405, 640);
+    if (front && ai.rangedPressure && absX > 165 && !ai.route) {
+      const flank = p.depth > 570 ? -1 : p.depth < 470 ? 1 : (e.id % 2 ? 1 : -1);
+      goalDepth = clamp(p.depth + flank * 68, 405, 640);
+      goalX = clamp(p.x + leadX + ai.side * 110, 50, 1230);
+    }
     if (e.element === 'earth' && rotating && !canApproachGrab && absX < 140 && absLane < 30) goalX = e.x;
     // Crossing the target's front is done in a separate lane, not through its body.
     if ((e.x - p.x) * ai.side < -18 && !ai.route) {
@@ -213,7 +236,8 @@ export class EnemyAI {
     input.right = goalX - projectedX > toleranceX;
     input.up = goalDepth - projectedDepth < -toleranceDepth;
     input.down = goalDepth - projectedDepth > toleranceDepth;
-    input.run = Math.abs(goalX - e.x) > style.runAt && Math.abs(goalDepth - e.depth) < 30;
+    const escaping = ai.motion.vx * facing > 120 && absX > 155;
+    input.run = Math.abs(goalX - e.x) > ((escaping || ai.rangedPressure) ? 115 : style.runAt) && Math.abs(goalDepth - e.depth) < 30;
     if (ai.guardUntil > s.time) return { guard: true };
     if (ai.evadeUntil > s.time) return { up: ai.evadeDirection < 0, down: ai.evadeDirection > 0,
       left: ai.evadeX < 0, right: ai.evadeX > 0 };
@@ -222,6 +246,16 @@ export class EnemyAI {
     if (ai.think > 0) return input;
     ai.think = level.reaction * (.8 + game.random() * .4);
     if (!targetUp || ai.route || (rotating && !canApproachGrab && !ai.airChasing)) return input;
+
+    // A reserved pursuer can spend its ordinary dash to cut a retreat or close
+    // along a flanking lane after repeated ranged attacks. No hidden speed warp.
+    if (front && s.settings.difficulty !== 'easy' && !boss && e.grounded &&
+        !e.action && e.cooldowns.dash <= 0 && e.energy >= 18 &&
+        absX > 210 && absX < 480 && absLane < 90 &&
+        (escaping || (ai.rangedPressure && absLane > 38))) {
+      return { ...input, dash: true, attackDirection: facing,
+        attackDepthDirection: 0 };
+    }
 
     if (front && canApproachGrab && p.invulnerable <= 0 && absX <= 50 && absLane < 15 &&
         !e.guard && this.occupied(game) < level.attackers) {
@@ -282,6 +316,8 @@ export class EnemyAI {
         s.settings.difficulty !== 'easy' && e.energy >= 8 && e.cooldowns.launcher <= 0 &&
         (whiff || (p.guard && e.element === 'earth'))) add('launcher', 1.25 + (whiff ? .3 : 0));
     if (e.element === 'water' && e.hp < e.maxHp * .55 && ready('burst') && absX < 280) add('burst', 1.5);
+    if (!boss && ['earth', 'fire'].includes(e.element) && this.guardSince != null &&
+        s.time - this.guardSince > .65 && absX < 180 && absLane < 30 && ready('burst')) add('burst', 1.6);
     if (boss && absX < 210 && absLane < 36 && Math.abs(p.z - e.z) < 80 && ready('burst')) add('burst', 1.05);
     if (absX > 145 && absX < style.shotRange && absLane < 22 && Math.abs(p.z - e.z) < 55 &&
         !ai.mustClose && s.time >= ai.shotAfter && ready('special') && this.clearShot(game, e, p) &&

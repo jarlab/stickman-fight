@@ -237,6 +237,57 @@ test('Easy enemies keep the slower floor recovery instead of copying Hard defens
   assert.ok(!game.enemyAI.input(game, foe).dash);
 });
 
+test('the world tick delivers enemy recovery input instead of filtering out knocked-down fighters', () => {
+  const { game, foe } = arena('fire', 'normal');
+  think(game);
+  Object.assign(foe, { knockdown: .55, downTime: .31, grounded: true, stun: .2 });
+  game.tick({}, 1 / 120);
+  assert.ok(foe.recoveryRoll, 'normal gameplay must reach the controller recovery decision');
+});
+
+test('a reachable fighter takes an attack turn before distant opponents with older turns', () => {
+  const { game, foe } = arena('fire', 'normal');
+  const distant = [80, 1200].map(x => game.spawnEnemy({ element: 'earth', x, depth: 420 }));
+  think(game);
+  distant.forEach(e => { e.ai.lastTurn = -5; });
+  foe.ai.lastTurn = game.state.time - .5;
+  game.enemyAI.update(game, .01);
+  assert.equal(foe.ai.permit, true);
+});
+
+test('repeated visible casts trigger a flanking approach, and the memory expires', () => {
+  const { game, foe, player } = arena('fire', 'normal');
+  Object.assign(foe, { x: 290, aiTimer: 99 });
+  for (let i = 0; i < 2; i++) {
+    player.action = { kind: 'special', t: .3 };
+    think(game, .4);
+  }
+  const input = game.enemyAI.input(game, foe);
+  assert.ok(input.up || input.down, 'the approach leaves the repeated firing lane');
+  assert.ok(!input.special, 'the response closes space rather than trading projectiles');
+  player.action = null;
+  think(game, 4.1);
+  assert.equal(foe.ai.rangedPressure, false);
+});
+
+test('a single held cast does not count as repeated attacks', () => {
+  const { game, foe, player } = arena('fire', 'normal');
+  player.action = { kind: 'special', t: .4 };
+  for (let i = 0; i < 5; i++) think(game, .2);
+  assert.equal(foe.ai.rangedPressure, false);
+});
+
+test('a pursuer spends an ordinary dash to intercept a retreat and pays the energy cost', () => {
+  const { game, foe, player } = arena('fire', 'normal');
+  Object.assign(foe, { x: 340, energy: 50 });
+  player.vx = 200;
+  think(game);
+  const input = game.enemyAI.input(game, foe);
+  assert.equal(input.dash, true);
+  game.updateFighter(foe, input, 1 / 120);
+  assert.ok(foe.dashTime > 0 && foe.energy < 50);
+});
+
 for (const element of ['air', 'water', 'earth', 'fire']) {
   test(`${element} AI follows an earned launcher with real aerial hits and keeps its crowd reservation`, () => {
     const { game, foe, player } = arena(element);

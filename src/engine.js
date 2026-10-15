@@ -274,7 +274,8 @@ export class Game {
       const direction = Number(!!input.right) - Number(!!input.left);
       const depthDirection = Number(!!input.down) - Number(!!input.up);
       if (direction && !f.action) f.facing = direction;
-      let speed = spec.speed * (f.team === 'enemy' ? 0.65 * this.difficulty.speed : 1);
+      const pursuit = { easy: .65, normal: .82, hard: .9 }[this.state.settings.difficulty];
+      let speed = spec.speed * (f.team === 'enemy' ? pursuit * this.difficulty.speed : 1);
       f.running = !!input.run && !!direction && f.grounded && !f.guard && !f.action;
       if (f.running) speed *= 1.65;
       if (direction && depthDirection) speed *= Math.SQRT1_2;
@@ -845,7 +846,8 @@ export class Game {
     const dx = p.x - e.x;
     const lane = p.depth - e.depth;
     const input = {};
-    if (e.stun > 0 || e.knockdown > 0 || e.frozen > 0 || e.grabbedBy != null) return input;
+    // The controller also chooses recovery rolls while knocked down. Let it
+    // see disabled fighters; updateFighter still enforces every action gate.
     const boss = e.type === 'boss';
     if (boss && e.hp < e.maxHp * 0.5 && e.bossPhase === 1) {
       e.bossPhase = 2;

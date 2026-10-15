@@ -736,13 +736,17 @@ test('survival continues and introduces a boss on its third wave', () => {
   assert.ok(game.state.enemies.some(enemy => enemy.type === 'boss'));
 });
 
-test('hard difficulty produces a stronger enemy threat than easy', () => {
+test('difficulty preserves ordinary enemy health parity with the playable element', () => {
   const easy = new Game({ element: 'air', arena: 'air', mode: 'survival', difficulty: 'easy' });
   const hard = new Game({ element: 'air', arena: 'air', mode: 'survival', difficulty: 'hard' });
   easy.start();
   hard.start();
-  const totalHp = game => game.state.enemies.reduce((total, enemy) => total + enemy.maxHp, 0);
-  assert.ok(totalHp(hard) > totalHp(easy), 'hard enemies require more damage to defeat');
+  for (const game of [easy, hard]) {
+    for (const enemy of game.state.enemies) {
+      const playable = new Game({ element: enemy.element });
+      assert.equal(enemy.maxHp, playable.state.player.maxHp);
+    }
+  }
 });
 
 test('pausing freezes simulation and resuming restores movement', () => {
