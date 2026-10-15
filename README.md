@@ -68,7 +68,13 @@ All modes, classes, arenas and difficulties are available immediately. **Enemies
 - **Challenge:** three waves with one life; twelve opponents on Auto, or three times your selected count.
 - **Story:** four short combat stages through the elemental sanctuaries, each with a guardian. This is a combat prototype, not a narrative campaign.
 
-Normal runs have three lives and no time limit. Easy/normal/hard adjust enemy strength and aggression. Bosses gain a second phase below half health. A cleared wave restores some health and energy.
+Normal runs have three lives and no time limit. Regular enemies have the same health as a playable fighter of their element: Air 100, Water 115, Earth 145, Fire 105, on every difficulty. Easy/normal/hard change their tactics, speed, damage and aggression; bosses retain larger health pools. A cleared wave restores some health and energy.
+
+Each guardian has two situational techniques and a new pattern at half health. Fire charges and sweeps before unleashing Wildfire eruptions. Air retreats into gusts and then surrounds space with cyclones. Earth braces for quakes and pillars before opening sequential faultlines. Water yields behind a guarded counter, then fills alternating lanes with rising tides. Floor markings lock when a move starts: sidestep lanes, jump low waves, leave pillar/eruption marks, and attack during the clearly labeled recovery. Boss phase changes grant no healing or invulnerability.
+
+Enemy decisions use visible movement and short-lived attack history. Repeated projectiles encourage flanking, repeated jabs encourage a defensive beat and counter, and retreating targets can provoke a dash pursuit. Nearby fighters receive useful attack turns while crowds retain their Easy/Normal/Hard limits of 1/2/3 simultaneous offensive commitments. Normal/Hard enemies also use recovery rolls after knockdown.
+
+See [the LF2 boss investigation](docs/lf2-boss-investigation.md) for the REA evidence and the distinction between recovered behavior and our original elemental encounters.
 
 Enemies line up with your lane before striking, move around blocked approaches, and spread to both sides when there is room. Easy, Normal and Hard allow one, two and three simultaneous attack commitments respectively, including aerial pursuits. Fire rushes in and keeps pressure on; Air stays outside the pocket, evades diagonally and probes for openings; Earth holds its ground and guards approaches; Water guards, redirects and returns with a counter. Normal/Hard enemies predict visible movement and projectile paths, choose attacks by their usefulness in the current situation, punish missed attacks or exposed landings, complete earned air combos and roll out of knockdowns. Decisions have reaction delays, committed movement and normal resource costs. Easy retains slower decisions and ordinary get-up recovery. Enemies respect protected knockdowns and wait for you to become vulnerable.
 

@@ -53,6 +53,12 @@ function groundDepth(entity) {
   return Number.isFinite(entity.depth) ? entity.depth : (entity.y || 0) + (entity.z || 0);
 }
 
+function hazardPath(ctx, hazard) {
+  ctx.beginPath();
+  if (hazard.shape === 'lane') ctx.rect(-hazard.rx, -hazard.rd, hazard.rx * 2, hazard.rd * 2);
+  else ctx.ellipse(0, 0, hazard.rx, hazard.rd, 0, 0, Math.PI * 2);
+}
+
 const POSE_JOINTS = ['hip', 'shoulder', 'head', 'rearKnee', 'rearFoot', 'frontKnee', 'frontFoot', 'rearElbow', 'rearHand', 'elbow', 'hand'];
 const clamp01 = value => Math.max(0, Math.min(1, value));
 const smooth = value => { const t = clamp01(value); return t * t * (3 - 2 * t); };
@@ -131,6 +137,22 @@ const MARTIAL_POSES = {
 };
 
 const DEFAULT_AERIAL_POSE = { air: 'airPalm', water: 'waterPalm', earth: 'earthHammer', fire: 'fireKick' };
+
+const BOSS_POSES = {
+  air: { trail: 'cast', wind: { lean: -8, drop: 3, rearElbow: [-20, -36], rearHand: [-26, -51], elbow: [13, -35], hand: [17, -57], rearFoot: [-25, -1], frontFoot: [24, -1] }, strike: { lean: 12, elbow: [28, -43], hand: [45, -46], rearElbow: [22, -28], rearHand: [39, -32], frontFoot: [28, -1], rearFoot: [-26, -1] } },
+  water: { trail: 'cast', wind: { lean: -9, drop: 6, rearElbow: [-18, -26], rearHand: [-7, -16], elbow: [12, -47], hand: [24, -59], rearFoot: [-27, -1], frontFoot: [26, -1] }, strike: { lean: 7, drop: 2, elbow: [27, -35], hand: [43, -31], rearElbow: [14, -49], rearHand: [31, -57], rearFoot: [-27, -1], frontFoot: [27, -1] } },
+  earth: { trail: 'slam', wind: { lean: -3, drop: 5, rearElbow: [-20, -46], rearHand: [-15, -65], elbow: [18, -48], hand: [17, -69], rearFoot: [-29, -1], frontFoot: [29, -1] }, strike: { lean: 14, drop: 14, rearElbow: [10, -20], rearHand: [24, -8], elbow: [29, -19], hand: [38, -3], rearKnee: [-20, -10], frontKnee: [23, -10], rearFoot: [-30, -1], frontFoot: [30, -1] } },
+  fire: { trail: 'cast', wind: { lean: -9, drop: 4, rearElbow: [9, -35], rearHand: [19, -48], elbow: [-16, -36], hand: [-17, -53], rearFoot: [-27, -1], frontFoot: [23, -1] }, strike: { lean: 18, drop: 2, elbow: [32, -39], hand: [48, -42], rearElbow: [-10, -30], rearHand: [-19, -27], rearFoot: [-29, -1], frontFoot: [30, -1] } },
+};
+const BOSS_MOVE_POSES = {
+  'gale-counter': MARTIAL_POSES.airLift,
+  'cyclone-ring': { trail: 'cast', wind: { drop: 4, elbow: [8, -41], hand: [-1, -52], rearElbow: [-9, -40], rearHand: [2, -49], rearFoot: [-27, -1], frontFoot: [27, -1] }, strike: { drop: -3, elbow: [24, -49], hand: [42, -55], rearElbow: [-24, -49], rearHand: [-42, -55], rearFoot: [-28, -1], frontFoot: [28, -1] } },
+  'tide-counter': MARTIAL_POSES.waterLift,
+  'ice-lance': CAST_POSES.water,
+  'stone-columns': { trail: 'cast', wind: { drop: 11, elbow: [22, -20], hand: [24, -9], rearElbow: [-22, -20], rearHand: [-24, -9], rearKnee: [-20, -10], frontKnee: [22, -10], rearFoot: [-30, -1], frontFoot: [30, -1] }, strike: { drop: -2, elbow: [20, -47], hand: [22, -66], rearElbow: [-20, -47], rearHand: [-22, -66], rearFoot: [-29, -1], frontFoot: [29, -1] } },
+  'flame-sweep': COMBO_POSES.fire[2],
+  'triple-eruption': BOSS_POSES.earth,
+};
 
 function poseWith(base, overrides) {
   const pose = {};
@@ -224,6 +246,27 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
       const recovery = smooth((t - activeUntil) / (duration - activeUntil));
       pose = blendPose(follow, rest, recovery);
       stroke = Math.max(0, 0.85 - recovery * 2.4);
+    }
+  }
+
+  const bossAction = fighter.bossAction;
+  if (bossAction) {
+    style = BOSS_MOVE_POSES[bossAction.move] || BOSS_POSES[fighter.element] || BOSS_POSES.air;
+    const prepared = poseWith(rest, style.wind);
+    const contact = poseWith(rest, style.strike);
+    if (bossAction.stage === 'transition') {
+      pose = poseWith(rest, { drop: -3, elbow: [22, -49], hand: [28, -68], rearElbow: [-22, -49], rearHand: [-28, -68], rearFoot: [-28, -1], frontFoot: [28, -1] });
+      stroke = 0;
+      style = null;
+    } else if (bossAction.stage === 'windup') {
+      pose = blendPose(rest, prepared, smooth(bossAction.t / Math.max(0.08, Math.min(0.25, bossAction.windup * 0.35))));
+      stroke = 0;
+    } else if (bossAction.stage === 'active') {
+      pose = blendPose(prepared, contact, smooth((bossAction.t - bossAction.windup) / 0.1));
+      stroke = Math.max(0.3, 1 - (bossAction.t - bossAction.windup) * 2);
+    } else {
+      pose = blendPose(contact, rest, smooth((bossAction.t - bossAction.activeUntil) / Math.max(0.08, bossAction.duration - bossAction.activeUntil)));
+      stroke = 0;
     }
   }
 
@@ -546,6 +589,12 @@ export class Renderer {
     for (const weapon of weapons) this.drawGroundShadow(weapon, 'pickup');
     for (const projectile of projectiles) if (projectile.kind === 'weapon') this.drawGroundShadow(projectile, 'projectile');
     for (const effect of state.effects || []) if (effect.kind !== 'impact' && effect.kind !== 'slash') this.drawEffect(effect, reducedMotion);
+    const labeledBosses = new Set();
+    for (const hazard of state.bossHazards || []) {
+      const label = hazard.delay > 0 && !labeledBosses.has(hazard.ownerId);
+      this.drawBossHazard(hazard, time, reducedMotion, label);
+      if (label) labeledBosses.add(hazard.ownerId);
+    }
     const objects = [
       ...fighters.map(entity => ({ entity, kind: 'fighter' })),
       ...corpses.map(entity => ({ entity, kind: 'corpse' })),
@@ -586,6 +635,133 @@ export class Renderer {
       }
     }
     ctx.restore();
+  }
+
+  drawBossHazard(hazard, time, reducedMotion, showLabel) {
+    const ctx = this.ctx;
+    const warning = hazard.delay > 0;
+    const color = elementColor(hazard.element);
+    const progress = warning ? clamp01(1 - hazard.delay / Math.max(0.001, hazard.warningTime)) : 1;
+    const fade = warning ? 1 : Math.min(1, Math.max(0, hazard.life / Math.max(0.001, hazard.maxLife)) * 3);
+    ctx.save();
+    ctx.translate(hazard.x, hazard.depth);
+    hazardPath(ctx, hazard);
+    ctx.fillStyle = warning ? '#c57535' : color;
+    ctx.globalAlpha = warning ? 0.12 : 0.18 * fade;
+    ctx.fill();
+    // The boundary always shows the full collision footprint; its size never pulses.
+    ctx.globalAlpha = warning ? 0.9 : fade;
+    ctx.strokeStyle = '#fff9e7';
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    ctx.strokeStyle = warning ? '#9d4d2b' : color;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.save();
+    hazardPath(ctx, hazard);
+    ctx.clip();
+    ctx.globalAlpha = warning ? 0.24 : 0.3 * fade;
+    for (let x = -hazard.rx - hazard.rd; x < hazard.rx + hazard.rd; x += 28) {
+      line(ctx, [[x - hazard.rd, hazard.rd], [x + hazard.rd, -hazard.rd]], warning ? '#9d4d2b' : color, 2);
+    }
+    ctx.restore();
+    if (warning) {
+      ctx.globalAlpha = 1;
+      circle(ctx, 0, -3, 12, '#fff8e8', '#9d4d2b', 1.5);
+      ctx.fillStyle = '#8a3e27';
+      ctx.font = '900 17px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('!', 0, 3);
+      ctx.fillStyle = '#72523c';
+      ctx.fillRect(-24, 15, 48, 5);
+      ctx.fillStyle = '#ffe6a4';
+      ctx.fillRect(-23, 16, 46 * progress, 3);
+    } else {
+      ctx.globalAlpha = fade * (reducedMotion ? 0.65 : 0.85);
+      if (reducedMotion) {
+        elementGlyph(ctx, hazard.element, 0, -Math.min(hazard.height * 0.45, 36), 14, color, 2.5);
+        line(ctx, [[0, 0], [0, -hazard.height]], color, 2);
+        line(ctx, [[-8, -hazard.height], [8, -hazard.height]], color, 2);
+      } else this.drawBossHazardElement(hazard, time);
+    }
+    ctx.restore();
+    if (showLabel) {
+      ctx.save();
+      ctx.font = '800 11px system-ui, sans-serif';
+      const name = hazard.name.toUpperCase();
+      const hint = hazard.hint;
+      const width = Math.min(390, Math.max(ctx.measureText(name).width, ctx.measureText(hint).width) + 24);
+      const x = Math.max(width / 2 + 12, Math.min(WIDTH - width / 2 - 12, hazard.x));
+      const y = Math.max(306, hazard.depth - hazard.rd - 34);
+      ctx.fillStyle = '#fff8e8';
+      ctx.fillRect(x - width / 2, y - 14, width, 35);
+      ctx.strokeStyle = '#9d4d2b';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x - width / 2, y - 14, width, 35);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#93472c';
+      ctx.fillText(name, x, y - 1, width - 12);
+      ctx.fillStyle = INK;
+      ctx.font = '600 11px system-ui, sans-serif';
+      ctx.fillText(hint, x, y + 14, width - 12);
+      ctx.restore();
+    }
+  }
+
+  drawBossHazardElement(hazard, time) {
+    const ctx = this.ctx;
+    const { rx, rd, height, element } = hazard;
+    const count = Math.max(3, Math.min(7, Math.ceil(rx / 60)));
+    if (element === 'air') {
+      for (let i = 0; i < 3; i += 1) {
+        ctx.beginPath();
+        const turn = time * 6 + i;
+        ctx.ellipse(0, -height * (i + 0.3) / 3, rx * (0.74 + i * 0.08), Math.min(rd, 10 + rd * 0.4), 0, turn, turn + Math.PI * 1.65);
+        ctx.strokeStyle = i % 2 ? '#fffdf0' : '#6cae9e';
+        ctx.lineWidth = 5 - i;
+        ctx.stroke();
+      }
+    } else if (element === 'water') {
+      for (let i = 0; i < count; i += 1) {
+        const x = (i / (count - 1) - 0.5) * rx * 1.65;
+        if (hazard.move === 'ice-lance') {
+          polygon(ctx, [[x - 10, 0], [x - 5, -height * 0.72], [x + 2, -height], [x + 12, -height * 0.23], [x + 10, 0]], '#a1d9e7', '#4b93b2', 1.5);
+          line(ctx, [[x + 1, -height * 0.86], [x + 4, -10]], '#f2ffff', 2);
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(x - 22, 0);
+          ctx.bezierCurveTo(x - 15, -height * 0.5, x - 8, -height, x + 8, -height);
+          ctx.bezierCurveTo(x + 24, -height, x + 25, -height * 0.35, x + 14, -height * 0.35);
+          ctx.strokeStyle = '#4c9abb';
+          ctx.lineWidth = 8;
+          ctx.stroke();
+          ctx.strokeStyle = '#d7f8ed';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+    } else if (element === 'earth') {
+      for (let i = 0; i < count; i += 1) {
+        const x = (i / (count - 1) - 0.5) * rx * 1.6;
+        const width = Math.min(18, rx / (count + 1));
+        polygon(ctx, [[x - width, 0], [x - width * 0.7, -height * 0.8], [x + 1, -height], [x + width, -height * 0.66], [x + width, 0]], '#b39b68', '#77754e', 2);
+        polygon(ctx, [[x + 1, -height], [x + width, -height * 0.66], [x + width, 0], [x + 2, 0]], '#95865e');
+        line(ctx, [[x - width * 0.5, -height * 0.75], [x, -height * 0.86]], '#eddfad', 2);
+      }
+    } else {
+      for (let i = 0; i < count; i += 1) {
+        const x = (i / (count - 1) - 0.5) * rx * 1.7;
+        const width = Math.min(22, rx / (count + 1));
+        const sway = Math.sin(time * 14 + i * 1.7) * 5;
+        ctx.beginPath();
+        ctx.moveTo(x - width, 0);
+        ctx.bezierCurveTo(x - width * 1.2, -height * 0.4, x + sway, -height * 0.7, x + sway, -height);
+        ctx.bezierCurveTo(x + width * 1.4, -height * 0.63, x + width * 0.4, -height * 0.3, x + width, 0);
+        ctx.fillStyle = '#d96e40';
+        ctx.fill();
+        polygon(ctx, [[x - width * 0.55, 0], [x + sway * 0.4, -height * 0.64], [x + width * 0.55, 0]], '#ffd383');
+      }
+    }
   }
 
   drawGroundShadow(entity, kind) {
@@ -708,6 +884,7 @@ export class Renderer {
 
     if (fighter.recoveryRoll) this.drawRecoveryTrail(fighter, reducedMotion);
     else this.drawLaunchTrail(fighter, visualTime, reducedMotion);
+    if (isBoss) this.drawBossAura(fighter, visualTime, reducedMotion);
 
     if ((fighter.knockdown || 0) > 0 && !fighter.recoveryRoll) {
       const airborne = (fighter.z || 0) > 4;
@@ -801,6 +978,22 @@ export class Renderer {
     } else {
       polygon(ctx, [[shoulder[0] - 5, shoulder[1] - 1], [shoulder[0] + 6, shoulder[1]], [hip[0] + 6, hip[1]], [hip[0] - 7, hip[1]]], bodyColor, INK, 2);
       line(ctx, [[shoulder[0] - 4, shoulder[1] + 1], [hip[0] + 4, hip[1] - 2]], '#f4dbab', 3);
+    }
+    if (isBoss) {
+      const empowered = fighter.bossPhase > 1;
+      const trim = empowered ? '#ffdf93' : '#d4b66f';
+      if (fighter.element === 'earth') {
+        for (const side of [-1, 1]) polygon(ctx, [[shoulder[0] + side * 7, shoulder[1] - 5], [shoulder[0] + side * 18, shoulder[1] - 2], [shoulder[0] + side * 16, shoulder[1] + 8], [shoulder[0] + side * 7, shoulder[1] + 5]], bodyColor, trim, 2);
+      } else if (fighter.element === 'water') {
+        line(ctx, [[shoulder[0] - 11, shoulder[1] - 3], [shoulder[0], shoulder[1] + 7], [shoulder[0] + 11, shoulder[1] - 3]], '#d4f2e7', 6);
+        line(ctx, [[shoulder[0] - 8, shoulder[1] + 6], [hip[0] - 15, hip[1] + 10]], color, 7);
+      } else if (fighter.element === 'air') {
+        line(ctx, [[shoulder[0] - 6, shoulder[1]], [shoulder[0] - 25, shoulder[1] - 7], [shoulder[0] - 37, shoulder[1] + 2]], '#e9f2d8', 6);
+        line(ctx, [[hip[0] - 8, hip[1]], [hip[0] - 19, hip[1] + 12]], color, 5);
+      } else {
+        polygon(ctx, [[shoulder[0] - 12, shoulder[1] - 3], [shoulder[0] - 5, shoulder[1] + 8], [shoulder[0] + 2, shoulder[1] - 1], [shoulder[0] + 10, shoulder[1] + 6], [shoulder[0] + 13, shoulder[1] - 5]], '#8e4233', trim, 1.5);
+      }
+      line(ctx, [[hip[0] - 8, hip[1]], [hip[0] + 9, hip[1]]], trim, empowered ? 4 : 2.5);
     }
 
     // Headwear and silhouettes distinguish the four premade fighters.
@@ -911,13 +1104,39 @@ export class Renderer {
     ctx.restore();
   }
 
+  drawBossAura(fighter, time, reducedMotion) {
+    const action = fighter.bossAction;
+    if (fighter.bossPhase < 2 && !action) return;
+    const ctx = this.ctx;
+    const h = fighter.h || 104;
+    const color = elementColor(fighter.element);
+    const transition = action?.stage === 'transition';
+    const charge = action?.stage === 'windup' ? clamp01(action.t / Math.max(0.001, action.windup)) : 0;
+    ctx.save();
+    ctx.globalAlpha = transition ? 0.75 : action ? 0.6 : 0.35;
+    const span = h * (transition ? 0.5 : 0.36);
+    const rise = reducedMotion ? 0 : Math.sin(time * 3) * 3;
+    for (const side of [-1, 1]) {
+      elementGlyph(ctx, fighter.element, fighter.x + side * span, fighter.y - h * 0.77 + rise, transition ? 11 : 7 + charge * 3, color, 1.6);
+    }
+    if (transition) {
+      ctx.strokeStyle = '#e6c77c';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.ellipse(fighter.x, fighter.y - h * 0.57, h * 0.6, h * 0.73, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   drawGather(fighter, pose, reducedMotion) {
-    const action = fighter.action;
-    if (!action || !['special', 'burst'].includes(action.kind) || action.t >= action.windup) return;
+    const bossCharge = fighter.bossAction?.stage === 'windup';
+    const action = bossCharge ? fighter.bossAction : fighter.action;
+    if (!action || (!bossCharge && !['special', 'burst'].includes(action.kind)) || action.t >= action.windup) return;
     const ctx = this.ctx;
     const color = elementColor(fighter.element);
     const charge = clamp01(action.t / action.windup);
-    const radius = 9 + charge * (action.kind === 'burst' ? 16 : 8);
+    const radius = 9 + charge * (bossCharge || action.kind === 'burst' ? 16 : 8);
     const [x, y] = pose.hand;
     ctx.save();
     ctx.globalAlpha *= 0.3 + charge * 0.3;

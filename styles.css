@@ -119,6 +119,7 @@ kbd { display: inline-grid; place-items: center; min-width: 21px; min-height: 22
 .page-footer > span:nth-child(2) { letter-spacing: .3px; }
 .boss-hud { position: absolute; top: 18px; left: 32%; width: 36%; padding: 10px 12px; border: 1px solid #59413933; background: #f9f4e8ec; border-radius: 3px; }
 .boss-hud > div:first-child { display: flex; justify-content: space-between; gap: 12px; font-size: 9px; letter-spacing: 1px; margin-bottom: 5px; }
+.boss-hud p { margin: 6px 0 0; font-size: 10px; line-height: 1.35; color: #594139; }
 .boss-track { background: #d9cfc0; height: 5px; }
 .boss-track > span { background: #ad5845; }
 .modal-overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; background: #112d2c78; backdrop-filter: blur(4px); z-index: 3; }

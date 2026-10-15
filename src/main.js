@@ -1,4 +1,5 @@
 import { Game } from './engine.js';
+import { BOSSES } from './bosses.js';
 import { Renderer } from './renderer.js';
 import { KeyboardInput, PLAY_KEYS } from './input.js';
 import { ELEMENTS, COMBAT, ARENAS, MODES, DIFFICULTIES } from './data.js';
@@ -288,9 +289,14 @@ function updateHud() {
   const boss = s.enemies.find((enemy) => enemy.type === 'boss' && !enemy.dead && enemy.hp > 0);
   $('boss-hud').hidden = !boss || s.status === 'ready';
   if (boss) {
-    $('boss-name').textContent = `${ELEMENTS[boss.element].name.toUpperCase()} GUARDIAN${boss.bossPhase > 1 ? ' · ENRAGED' : ''}`;
+    const identity = BOSSES[boss.element];
+    $('boss-name').textContent = identity.name.toUpperCase();
     $('boss-health-value').textContent = `${Math.ceil(boss.hp)} / ${boss.maxHp}`;
     $('boss-health-fill').style.width = `${Math.max(0, boss.hp / boss.maxHp * 100)}%`;
+    const action = boss.bossAction;
+    $('boss-hint').textContent = action?.stage === 'recovery' ? `${action.name} · OPEN TO COUNTERATTACK`
+      : action?.hint ? `${action.name} · ${action.hint}`
+      : `Phase ${boss.bossPhase} · ${identity.phases[boss.bossPhase - 1]}`;
   }
 }
 
