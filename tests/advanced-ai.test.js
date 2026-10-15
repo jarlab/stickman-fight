@@ -277,6 +277,20 @@ test('a single held cast does not count as repeated attacks', () => {
   assert.equal(foe.ai.rangedPressure, false);
 });
 
+test('a repeated visible jab rhythm earns a fallible defensive beat instead of another blind approach', () => {
+  const { game, foe, player } = arena('earth', 'normal');
+  for (let i = 0; i < 2; i++) {
+    player.action = { kind: 'melee', t: .2, activeUntil: .14 };
+    think(game, .4);
+  }
+  player.action = null;
+  const input = game.enemyAI.input(game, foe);
+  assert.equal(input.guard, true, 'prediction still commits even when the player stops the pattern');
+  assert.ok(!offensive(input));
+  think(game, 4.1);
+  assert.equal(foe.ai.meleePressure, false);
+});
+
 test('a pursuer spends an ordinary dash to intercept a retreat and pays the energy cost', () => {
   const { game, foe, player } = arena('fire', 'normal');
   Object.assign(foe, { x: 340, energy: 50 });

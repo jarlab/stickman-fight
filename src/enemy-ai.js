@@ -1,5 +1,6 @@
 import { COMBAT, ELEMENTS } from './data.js';
 import { clamp } from './physics.js';
+import { isCommitted as bossCommitted } from './bosses.js';
 
 // LF2-informed individual decisions; formation, turns and detours are our
 // original adaptations for readable crowds in this smaller arena.
@@ -18,7 +19,7 @@ const alive = f => !f.dead && f.hp > 0;
 const disabled = f => f.stun > 0 || f.knockdown > 0 || f.frozen > 0 || f.grabbedBy != null;
 const offensive = f => ['melee', 'special', 'burst', 'throw', 'grabPunch', 'bodyThrow'].includes(f.action?.kind);
 const pending = f => ['attack', 'special', 'burst', 'throw', 'interact'].includes(f.buffer?.kind);
-const committed = f => f.grabTarget != null || offensive(f) || pending(f) || f.ai?.airChasing;
+const committed = f => f.grabTarget != null || offensive(f) || pending(f) || f.ai?.airChasing || f.ai?.bossCommitted;
 const grabOpening = f => alive(f) && f.grabbedBy == null && f.grabTarget == null &&
   f.grounded && f.z <= 8 && f.knockdown <= 0 && f.frozen <= 0 && f.stun > 0 && f.hitType === 'dizzy';
 const distance = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.depth - b.depth) * 1.4;
@@ -45,6 +46,7 @@ export class EnemyAI {
     }
     this.recentAttacks = this.recentAttacks.filter(a => s.time - a.time < 4);
     const rangedPressure = this.recentAttacks.filter(a => a.kind === 'special' || a.kind === 'throw').length >= 2;
+    const meleePressure = this.recentAttacks.filter(a => a.kind === 'melee').length >= 2;
     this.guardSince = p.guard ? (this.guardSince ?? s.time) : null;
     for (const shot of s.projectiles) {
       if (!this.projectileSeen.has(shot)) this.projectileSeen.set(shot, s.time);
@@ -65,7 +67,9 @@ export class EnemyAI {
           motion: { vx: p.vx, vDepth: p.vDepth }, observeAt: s.time + level.reaction };
       }
       const ai = e.ai;
+      ai.bossCommitted = e.type === 'boss' && bossCommitted(e, s);
       ai.rangedPressure = s.settings.difficulty !== 'easy' && rangedPressure;
+      ai.meleePressure = s.settings.difficulty !== 'easy' && meleePressure;
       ai.think = Math.max(0, ai.think - dt);
       ai.airChasing = ai.airChaseUntil > s.time && alive(p) && p.z > 20 &&
         p.knockdown <= 0 && !p.thrown && p.grabbedBy == null && !disabled(e) &&
@@ -145,6 +149,7 @@ export class EnemyAI {
       return input;
     }
     if (e.grabTarget != null) return this.gripInput(game, e, p, level);
+    if (e.bossAction || ai.bossCommitted) return input;
     const targetUp = alive(p) && p.knockdown <= 0 && p.grabbedBy == null && !p.thrown;
     // The same opening that permits a player grab gives an unarmed enemy a
     // reason to stop its combo and step in. Catching still waits out hit immunity.
@@ -247,6 +252,23 @@ export class EnemyAI {
     ai.think = level.reaction * (.8 + game.random() * .4);
     if (!targetUp || ai.route || (rotating && !canApproachGrab && !ai.airChasing)) return input;
 
+    // A remembered jab rhythm warrants a deliberate defensive beat before the
+    // next strike. This is fallible prediction: it also guards if the player
+    // stops attacking, and it cannot interrupt our own committed attack.
+    if (ai.meleePressure && !canApproachGrab && e.grounded && absX < 130 && absLane < 32 &&
+        p.facing === -facing && e.facing === facing && ai.guardAfter <= s.time && e.energy >= 20) {
+      ai.guardAfter = s.time + (e.element === 'earth' ? .8 : 1.05);
+      ai.counterUntil = s.time + .95;
+      if (e.element === 'air') {
+        ai.evadeX = -facing;
+        ai.evadeDirection = e.depth > 550 ? -1 : 1;
+        ai.evadeUntil = s.time + .22;
+        return { left: facing > 0, right: facing < 0, up: ai.evadeDirection < 0, down: ai.evadeDirection > 0 };
+      }
+      ai.guardUntil = s.time + .32;
+      return { guard: true };
+    }
+
     // A reserved pursuer can spend its ordinary dash to cut a retreat or close
     // along a flanking lane after repeated ranged attacks. No hidden speed warp.
     if (front && s.settings.difficulty !== 'easy' && !boss && e.grounded &&
@@ -302,6 +324,11 @@ export class EnemyAI {
     }
     if (!front || (e.aiTimer > 0 && !punish) ||
         this.occupied(game) - Number(!!ai.airChasing) >= level.attackers) return input;
+    if (boss && game.bosses.tryStart(game, e)) {
+      ai.lastAttack = ai.lastTurn = s.time;
+      ai.bossCommitted = true;
+      return {};
+    }
     const spec = ELEMENTS[e.element];
     const ready = kind => e.cooldowns[kind] <= 0 && e.energy >= spec[`${kind}Cost`];
     // Utility ranking lets the same limited attack slot choose the best visible
@@ -315,10 +342,9 @@ export class EnemyAI {
     if (inReach && e.grounded && !e.weapon && p.grounded && p.stun <= 0 &&
         s.settings.difficulty !== 'easy' && e.energy >= 8 && e.cooldowns.launcher <= 0 &&
         (whiff || (p.guard && e.element === 'earth'))) add('launcher', 1.25 + (whiff ? .3 : 0));
-    if (e.element === 'water' && e.hp < e.maxHp * .55 && ready('burst') && absX < 280) add('burst', 1.5);
+    if (!boss && e.element === 'water' && e.hp < e.maxHp * .55 && ready('burst') && absX < 280) add('burst', 1.5);
     if (!boss && ['earth', 'fire'].includes(e.element) && this.guardSince != null &&
         s.time - this.guardSince > .65 && absX < 180 && absLane < 30 && ready('burst')) add('burst', 1.6);
-    if (boss && absX < 210 && absLane < 36 && Math.abs(p.z - e.z) < 80 && ready('burst')) add('burst', 1.05);
     if (absX > 145 && absX < style.shotRange && absLane < 22 && Math.abs(p.z - e.z) < 55 &&
         !ai.mustClose && s.time >= ai.shotAfter && ready('special') && this.clearShot(game, e, p) &&
         game.random() < style.shotChance * (s.settings.difficulty === 'easy' ? 1 : 2.2)) add(e.weapon ? 'throw' : 'special', .8);

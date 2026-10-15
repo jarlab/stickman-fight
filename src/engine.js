@@ -2,6 +2,7 @@ import { ELEMENTS, COMBAT, ARENAS, MODES, DIFFICULTIES } from './data.js';
 import { GRAVITY, clamp, moveFighter } from './physics.js';
 import { EnemyAI } from './enemy-ai.js';
 import { Grapples } from './grapples.js';
+import { BossDirector } from './bosses.js';
 
 const elements = Object.keys(ELEMENTS);
 const COMBAT_TICK = 1 / 30;
@@ -23,11 +24,13 @@ export class Game {
     this.difficulty = DIFFICULTIES[settings.difficulty];
     this.enemyAI = new EnemyAI();
     this.grapples = new Grapples();
+    this.bosses = new BossDirector();
     this.state = {
       settings, status: 'ready', time: 0, wave: 0, kills: 0, score: 0,
       lives: settings.mode === 'challenge' ? 1 : 3,
       player: null, enemies: [], projectiles: [], particles: [], effects: [],
       floaters: [], corpses: [], weapons: [],
+      bossHazards: [],
       arena: settings.arena, shake: 0, slowMotion: 0,
       banner: 'Find your element', bannerTime: 0, objective: MODES[settings.mode].objective,
       waveDelay: -1, weaponTimer: 10, combo: 0, comboTimer: 0, lastImpact: null, impacts: [],
@@ -107,6 +110,7 @@ export class Game {
     if (mode === 'story') {
       s.arena = elements[s.wave - 1];
       s.projectiles = [];
+      s.bossHazards = [];
       s.weapons = [];
       s.corpses = [];
       this.placePlayer();
@@ -183,11 +187,13 @@ export class Game {
     this.enemyAI.update(this, step);
     for (const e of s.enemies) {
       if (e.dead || e.hp <= 0) continue;
+      if (e.type === 'boss' && this.bosses.updatePhase(this, e) && e.ai) e.ai.bossCommitted = true;
       this.updateFighter(e, e.hitLag > 0 ? {} : this.enemyInput(e), step);
     }
     this.grapples.update(this, step);
     this.separateFighters(step);
     this.updateProjectiles(step);
+    this.bosses.updateHazards(this, step);
     this.resolveDeaths();
     if (s.status !== 'playing') return;
     if (s.settings.mode === 'training') {
@@ -234,7 +240,9 @@ export class Game {
     for (const key of countdowns) f[key] = Math.max(0, (f[key] || 0) - dt);
     for (const key of Object.keys(f.cooldowns)) f.cooldowns[key] = Math.max(0, f.cooldowns[key] - dt);
     if (f.team === 'enemy') this.bufferInput(f, input);
-    f.armor = !!(f.action?.move?.armor && f.action.t < f.action.activeUntil && f.grounded);
+    f.armor = !!((f.action?.move?.armor && f.action.t < f.action.activeUntil ||
+      f.bossAction?.armor && f.bossAction.t < f.bossAction.windup &&
+      (f.bossAction.poise == null || (f.bossAction.poiseHits ?? 0) < f.bossAction.poise)) && f.grounded);
     f.energy = Math.min(f.maxEnergy, f.energy + dt * (f.guard ? 2 : f.team === 'player' ? 14 : 18));
     if (f.burn > 0) {
       f.burnTick -= dt;
@@ -244,13 +252,14 @@ export class Game {
         this.effect(f.x, f.y - f.h / 2, '#cf7041', 3);
       }
     }
-    if (f.hp <= 0) { f.action = null; f.buffer = null; f.guard = false; return; }
+    if (f.hp <= 0) { this.endAction(f); f.buffer = null; f.guard = false; return; }
     if (f.grabbedBy != null) { f.buffer = null; return; }
     if (f.grabTarget != null) { this.grapples.control(this, f, input, dt); return; }
     if (f.recoveryRoll || this.tryRecoveryRoll(f)) {
       this.updateRecoveryRoll(f, dt);
       return;
     }
+    if (f.bossAction && this.bosses.updateFighter(this, f, dt)) return;
     if (f.knockdown > 0 && f.grounded) {
       f.knockdown = Math.max(0, f.knockdown - dt);
       if (!f.knockdown) {
@@ -396,7 +405,10 @@ export class Game {
     }
   }
 
-  endAction(f) { f.action = null; f.armor = false; f.tell = 0; f.attackTimer = 0; }
+  endAction(f) {
+    if (f.type === 'boss') this.bosses.cancel(this, f);
+    f.action = null; f.armor = false; f.tell = 0; f.attackTimer = 0;
+  }
 
   clearCombatInput(f) {
     f.buffer = null;
@@ -707,6 +719,11 @@ export class Game {
     if (target.element === 'earth') { amount *= 0.86; knockback *= 0.75; }
     if (target.type === 'boss') knockback *= 0.55;
     const armored = target.armor && !heavy && !guardBroken;
+    if (armored && target.bossAction?.poise != null) {
+      target.bossAction.poiseHits = (target.bossAction.poiseHits ?? 0) + 1;
+      target.armor = target.bossAction.poiseHits < target.bossAction.poise;
+    }
+    const guardedCounter = blocked && !guardBroken && target.bossAction?.move === 'tide-counter';
     if (!gripHit && !blocked && !armored && (target.grabTarget != null || target.grabbedBy != null)) this.grapples.release(this, target);
     if (armored) amount *= .6;
     if (!gripHit && !blocked && !armored) {
@@ -729,7 +746,7 @@ export class Game {
         hitDirection: direction, hitStrength: .75, hitType: 'grabHit' });
     } else if (!armored) {
       target.recoveryRoll = null;
-      this.endAction(target);
+      if (!guardedCounter) this.endAction(target);
       if (!blocked) this.clearCombatInput(target);
       if (recoveryRequest) target.buffer = recoveryRequest;
       target.vx = direction * knockback;
@@ -741,7 +758,7 @@ export class Game {
       if (lift > 0) { target.vy = -lift; target.grounded = false; }
       if (!blocked && airborne && options.spike) target.vy = options.spike;
       const stun = blocked ? .1 : guardBroken || dizzy ? .65 : options.stun ?? 7 * COMBAT_TICK;
-      target.stun = Math.max(target.stun, target.type === 'boss' && !guardBroken ? Math.min(stun, .28) : stun);
+      target.stun = guardedCounter ? 0 : Math.max(target.stun, target.type === 'boss' && !guardBroken ? Math.min(stun, .28) : stun);
       if (knockedDown) {
         // Recovery starts on the floor, so a launched fighter never gets up midair.
         target.knockdown = .55;
@@ -848,14 +865,7 @@ export class Game {
     const input = {};
     // The controller also chooses recovery rolls while knocked down. Let it
     // see disabled fighters; updateFighter still enforces every action gate.
-    const boss = e.type === 'boss';
-    if (boss && e.hp < e.maxHp * 0.5 && e.bossPhase === 1) {
-      e.bossPhase = 2;
-      e.energy = 100;
-      e.aiTimer = 0.3;
-      this.banner(`${ELEMENTS[e.element].name} guardian · unleashed`);
-      this.effect(e.x, e.y - 50, ELEMENTS[e.element].color, 22);
-    }
+    if (e.bossAction) return input;
     if (e.type === 'dummy') {
       if (!e.action) e.facing = dx >= 0 ? 1 : -1;
       if (!p.dead && p.hp > 0 && p.knockdown <= 0 && Math.abs(dx) < 100 && Math.abs(lane) < 30 && e.aiTimer <= 0) { input.attack = true; e.aiTimer = 2.2; }
@@ -934,6 +944,8 @@ export class Game {
     s.enemies = s.enemies.filter(e => !e.dead);
     const p = s.player;
     if (p.hp > 0) return;
+    s.bossHazards = [];
+    for (const enemy of s.enemies) if (enemy.type === 'boss') this.bosses.cancel(this, enemy);
     this.grapples.release(this, p);
     p.thrown = null;
     p.recoveryRoll = null;
