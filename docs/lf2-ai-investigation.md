@@ -42,19 +42,52 @@ The useful transferable behavior is deliberate lane alignment, distinct preferre
 
 The implemented controller is [`src/enemy-ai.js`](../src/enemy-ai.js). It translates those findings as follows:
 
-- **Approach deliberately.** Each enemy keeps an assigned side of the player while its destination follows the player's position continuously. Enemies close to an elemental preferred range, align depth, and stop movement input when committing an attack. Movement braking projects the enemy's own momentum by 100 ms; melee reach accounts for roughly two nominal LF2 samples of its own horizontal velocity. Neither predicts the player's future movement.
-- **Use distinct elemental decisions.** Air favors aerial pursuit; Water has a longer preferred melee distance, greater ranged willingness and a healing burst below 55% health; Earth approaches more conservatively and uses fewer ranged attacks; Fire closes more aggressively and begins running at a shorter chase distance. Powers check energy and cooldowns. Bosses retain wider reach and additional burst opportunities.
-- **Choose attacks at a bounded cadence.** Easy, Normal and Hard reconsider discretionary combat actions at base intervals of 250, 170 and 110 ms, each varied by ±20%. These intervals and the authored attack chances replace the native per-update random gates; the native odds are not copied into a 120 Hz loop. Connected melee attacks may queue a follow-up late in recovery, subject to facing, lane, height and chain-length checks.
-- **Guard recognizable frontal melee pressure.** A probabilistic guard decision requires a nearby melee attack, compatible facing, close depth and more than 60 ms of the opponent's attack progression. Water is more willing to guard. A guard lasts 240 ms and has a 1.2-second reuse delay. The existing combat system handles guard energy and breaks. This controller does not react to projectiles.
+- **Approach deliberately.** Each enemy keeps an assigned side of the player. Enemies close to an elemental preferred range, align depth, and stop movement input when committing an attack. Movement braking projects the enemy's own momentum by 100 ms; melee reach accounts for roughly two nominal LF2 samples of its own horizontal velocity. The modern extension also leads the player's sampled visible velocity, bounded to 65 horizontal and 24 depth units, with no lead on Easy.
+- **Use distinct elemental decisions.** Air maintains wider spacing and brief probing windows; Water favors guards, counters, ranged opportunities and a healing burst below 55% health; Earth holds a defensive anchor and uses fewer ranged attacks; Fire rushes sooner and has the shortest pauses between turns. Powers check energy and cooldowns. Bosses retain wider reach and additional burst opportunities.
+- **Choose attacks at a bounded cadence.** Easy, Normal and Hard reconsider discretionary combat actions at base intervals of 250, 170 and 110 ms, each varied by ±20%. These intervals replace native per-update random gates. A small utility ranking chooses among legal melee, launcher, shot and burst candidates; whiffs, exposed landings and short counter windows receive higher priority. Connected melee attacks may queue a follow-up late in recovery, subject to facing, lane, height and chain-length checks.
+- **Defend recognizable threats.** Melee defense requires nearby visible attack progression, compatible facing and close depth. Air can step diagonally away; Earth and Water favor guarding, with Earth also bracing against a visible approach. Projectile defense waits for the difficulty's reaction delay, predicts a possible impact within 650 ms and chooses guard or a committed lane escape. Guards cover the predicted contact with an 80 ms margin, bounded at 730 ms. Urgent dodges use the ordinary energy and cooldown rules. Departing or vertically separated projectiles are ignored.
 - **Respect opponent and resource state.** Enemies stop acquiring attack opportunities while the player is knocked down and cease pursuing a dead player. Ranged attacks require suitable range, depth, height, resources and an unobstructed teammate lane. After a shot or throw, that fighter must close toward melee range before shooting again, as well as waiting at least three seconds.
 
-**Our crowd coordination is an original adaptation.** Easy, Normal and Hard allow one, two and three concurrent offensive commitments respectively, including buffered follow-up attacks. Finished attackers step back briefly; fighters that have waited longer receive priority for the next opening. An approach that cannot produce an attack within four seconds yields its turn so a blocked pair cannot hold up the whole crowd. Stable left/right positions, depth routes when crossing the player's front, temporary teammate detours and clear-shot checks keep crowds readable. When the player is near a horizontal arena boundary, enemies choose the available side instead of seeking a position beyond the edge. Assignments rebalance when the player returns to the center.
+**Our crowd coordination is an original adaptation.** Easy, Normal and Hard allow one, two and three concurrent offensive commitments respectively, including buffered follow-up attacks and active aerial pursuit. Finished attackers rotate their turn with an element-dependent pause; fighters that have waited longer receive priority for the next opening. An approach that cannot produce an attack within four seconds yields its turn so a blocked pair cannot hold up the whole crowd. Stable left/right positions, depth routes when crossing the player's front, temporary teammate detours and clear-shot checks keep crowds readable. When the player is near a horizontal arena boundary, enemies choose the available side instead of seeking a position beyond the edge. Assignments rebalance when the player returns to the center.
 
 Those assignments, detours, rotations and attack limits are Fourfold gameplay choices, not recovered LF2 algorithms. They translate the observed attention to range, lane and obstruction into fights against larger crowds. The single-player game has only one human target, so it does not recreate LF2's multi-opponent target-switching probabilities.
 
 The original [xsoameix reverse-engineering notes](https://github.com/xsoameix/lf2) supplied address and structure leads. Behavior claims above were checked against the supplied executable rather than accepted solely from community labels.
 
-## Validation
+## Elemental tactics and modern extensions
+
+The following behaviors are original Fourfold decisions, not recovered LF2 algorithms:
+
+| Element | Behavior the player encounters |
+| --- | --- |
+| Fire | Fast approaches, close spacing, advancing kicks and short recovery between attack turns. Less inclined to stop behind a guard. |
+| Air | Wider orbit, fewer unsolicited approaches, brief probes, diagonal retreat from pressure and counters when the player overextends. Still follows a successful launch. |
+| Earth | Holds a close anchor instead of constantly retreating, braces against approaches, blocks frontal projectiles, and chooses heavy punishments. |
+| Water | Yields behind a guard, then takes a short counter opportunity; pulling strikes, freezes and healing support its reactive style. |
+
+Visible velocity is sampled at the reaction cadence; Normal/Hard use 120/180 ms of bounded lead. Projectile prediction uses velocity, depth, height and gravity. Decisions never inspect the user's held keys or future commands. A short evade commitment prevents alternating directions each frame; attack animations retain their facing and full commitment. Utility ranking applies only after range, state, resource and crowd-slot checks, with small seeded variation. It is deterministic game AI, not a trained model or online learning system.
+
+Normal/Hard pursue a confirmed launcher after its legal jump-cancel window, reserve the same offensive slot while airborne and queue the element's late aerial follow-ups. A blocked launcher does not grant this pursuit. Knockdowns and throws stop acquisition of new attacks; grounded enemies may use the same recovery roll as the player after a reaction delay. Easy retains ordinary floor recovery. Weapon pickups, earned grapples and their punch/throw timing retain the existing rules.
+
+### Current validation, 15 October 2026
+
+- All **240 tests** pass, including **23 new AI tests** and 11 new aerial tests. New AI cases exercise projectile detection delay, actual damage avoided, slow-projectile guard duration, whiff punishment, bounded interception, distinct elemental reactions, floor recovery, and complete AI launcher-to-air chains for all four elements. Existing AI and grapple tests remain unchanged.
+- Independent review caught a guard-duration gap for slow projectiles. New Earth/Water outcome tests failed before the correction and now verify that guard lasts through impact. Twenty-four seeded mixed-crowd simulations with 16 enemies across all difficulties sustained attacks without exceeding reservations.
+- Browser checks used keyboard combat in a Hard 12-enemy survival match, observed all four elements attacking/defending, and sampled no more than three offensive commitments. Separate keyboard runs completed every elemental air route; reduced motion was also checked. A short 120-frame sample with 12 enemies averaged 16.67 ms with a 16.8 ms maximum on this machine; this is not a hardware-independent benchmark.
+- Browser console reports zero errors or warnings; captured local module requests returned HTTP 200. Syntax and whitespace checks pass.
+
+The repeatable comparison under ignored `output/ai-benchmark/` runs the old controller and new controller on the **same current engine**, holding health, damage and moves constant. Each cell averages 24 runs (six seeds × four enemy elements), each 16 seconds long, with 2,000 HP on both sides to avoid early termination. The player stands still and repeatedly taps jabs or casts bolts while facing the opponent. These bounded scenarios test resistance to simple repetition; they do not measure human difficulty or every matchup.
+
+| Scenario / mean HP lost | Normal before → after | Hard before → after |
+| --- | --- | --- |
+| Enemy damage from repeated bolts | 377.1 → 211.0 (44% less) | 377.1 → 157.6 (58% less) |
+| Player damage during repeated bolts | 0 → 72.8 | 0 → 118.6 |
+| Player damage during repeated jabs | 59.8 → 72.8 | 181.5 → 197.7 |
+| Enemy damage during repeated jabs | 275.8 → 274.7 | 146.7 → 149.5 |
+
+The improvement is strongest against repeated projectiles. Jab defense is roughly unchanged in this setup; the controller creates more offensive pressure rather than universally taking less damage. The comparison also excludes the separate shortening of Normal/Hard enemy telegraphs because both runs use the same updated engine.
+
+## Initial investigation validation
 
 - All **129 gameplay tests** pass, including **17 enemy-AI behavior tests** covering same-side crowds, ally detours, attack limits and rotation, target escape, knockdowns, reaction windows, committed attacks, per-element energy costs, screened shots, depth-boundary pressure and corner exits. The boundary and corner regressions failed before the routing corrections.
 - Independent simulations of **144 seeded boundary scenarios** sustained attacks through 18 seconds, involved at least four distinct fighters per run, and stayed within Normal's two-attacker limit.
