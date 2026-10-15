@@ -214,6 +214,15 @@ export class EnemyAI {
       ai.route = p.depth > 574 ? -(ai.side > 0 ? 92 : 152) :
         p.depth < 471 ? (ai.side > 0 ? 92 : 152) : ai.side * 100;
     }
+    if (ai.route && absX < 145 && absLane < 35 &&
+        (p.action?.kind === 'melee' || Math.hypot(ai.motion.vx, ai.motion.vDepth) > 60)) {
+      // Do not insist on crossing sides while the player follows the route.
+      // Take the close engagement from this side instead of circling forever.
+      ai.side = Math.sign(e.x - p.x) || -facing;
+      ai.route = 0;
+      goalX = clamp(p.x + leadX + ai.side * radius, 50, 1230);
+      goalDepth = clamp(p.depth + leadDepth, 405, 640);
+    }
     if (ai.route) {
       goalDepth = clamp(p.depth + ai.route, 405, 640);
       if (absLane < 48 && (e.x - p.x) * ai.side < 45) goalX = e.x;

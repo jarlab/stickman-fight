@@ -302,6 +302,18 @@ test('a pursuer spends an ordinary dash to intercept a retreat and pays the ener
   assert.ok(foe.dashTime > 0 && foe.energy < 50);
 });
 
+test('close pressure makes a fighter abandon a circling route and take the engagement', () => {
+  const { game, foe, player } = arena('fire', 'normal');
+  player.vDepth = 100;
+  think(game);
+  foe.ai.side = 1;
+  foe.ai.route = 100;
+  game.random = () => 0;
+  const input = game.enemyAI.input(game, foe);
+  assert.equal(foe.ai.route, 0);
+  assert.equal(input.attack, true, 'the controller fights a reachable pursuer instead of forever trying to flank');
+});
+
 for (const element of ['air', 'water', 'earth', 'fire']) {
   test(`${element} AI follows an earned launcher with real aerial hits and keeps its crowd reservation`, () => {
     const { game, foe, player } = arena(element);
