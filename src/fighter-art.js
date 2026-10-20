@@ -52,7 +52,10 @@ export const KO_BOX = [-24, -76, 34, 24];
 const FIRE_SPIKES = [[-0.27, 6.5, 0.3], [-0.47, 8.5, 0.36], [-0.67, 11, 0.38], [-0.86, 11.5, 0.32], [-1.04, 7.5, 0.24]];
 const len2 = (x, y) => Math.sqrt(x * x + y * y); // Math.hypot is slow and allocates in hot loops
 const fin = v => (Number.isFinite(v) ? v : 0);
-function wxHex(c) {
+// The construction helpers below are exported for src/enemy-art.js (the archetype bodies use the
+// same capsules, cloth ribbons, toes and mixes), so stroke weights and the flash outline cannot
+// drift apart between fighters and archetypes.
+export function wxHex(c) {
   if (typeof c !== 'string' || c[0] !== '#') return null;
   let h = c.slice(1);
   if (h.length === 3 || h.length === 4) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
@@ -62,7 +65,7 @@ function wxHex(c) {
   if (!Number.isFinite(n)) return null;
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
-function wxMix(a, b, t) {
+export function wxMix(a, b, t) {
   const pa = wxHex(a), pb = wxHex(b);
   if (!pa || !pb) return a;
   return `rgb(${Math.round(pa[0] + (pb[0] - pa[0]) * t)},${Math.round(pa[1] + (pb[1] - pa[1]) * t)},${Math.round(pa[2] + (pb[2] - pa[2]) * t)})`;
@@ -82,6 +85,9 @@ function wxTints(color) {
 for (const spec of Object.values(ELEMENTS)) wxTints(spec.color);
 let wxLay = false; // knocked down or frozen: cloth lies along the body toward the feet
 let wxOutline = false; // hit flash: cloth gets the same ink outline as the limbs
+// Another body drawer (src/enemy-art.js) sets the cloth state for its own draw and clears it
+// (false, false) in its finally, exactly as drawFighterBody does.
+export function wxClothState(lay, outline) { wxLay = !!lay; wxOutline = !!outline; }
 const WX_XS = new Float64Array(16), WX_YS = new Float64Array(16);
 const WX_S = { A: [0, 0, 0], L: [0, 0, 0], T: [0, 0] }; // per-draw state, reused
 const WX_M = { top: 0, left: 0, right: 0, torso: 0, headX: 0, headY: 0, headR: 0 };
@@ -94,11 +100,13 @@ const WX_Q0 = [0, 0], WX_Q1 = [0, 0]; // scratch capsule endpoints, consumed imm
 
 // Tapered capsule subpath a(radius ar) -> b(radius br). Every capsule winds the same way,
 // so a single nonzero fill unions a whole limb chain without seams, also when mirrored.
-function wxCapsule(ctx, a, ar, b, br) {
-  const th = Math.atan2(b[1] - a[1], b[0] - a[0]);
-  ctx.moveTo(b[0] + Math.cos(th - Math.PI / 2) * br, b[1] + Math.sin(th - Math.PI / 2) * br);
-  ctx.arc(b[0], b[1], br, th - Math.PI / 2, th + Math.PI / 2);
-  ctx.arc(a[0], a[1], ar, th + Math.PI / 2, th + Math.PI * 1.5);
+function wxCapsule(ctx, a, ar, b, br) { wxCapsuleXY(ctx, a[0], a[1], ar, b[0], b[1], br); }
+// The same capsule from scalar endpoints (src/enemy-art.js keeps its segments in a flat buffer).
+export function wxCapsuleXY(ctx, ax, ay, ar, bx, by, br) {
+  const th = Math.atan2(by - ay, bx - ax);
+  ctx.moveTo(bx + Math.cos(th - Math.PI / 2) * br, by + Math.sin(th - Math.PI / 2) * br);
+  ctx.arc(bx, by, br, th - Math.PI / 2, th + Math.PI / 2);
+  ctx.arc(ax, ay, ar, th + Math.PI / 2, th + Math.PI * 1.5);
   ctx.closePath();
 }
 function wxSeg(list, a, ar, b, br) {
@@ -116,7 +124,8 @@ function wxShape(ctx, list, grow, fill) {
 // Tapered cloth/hair ribbon: a travelling sine runs down its length and droop bends it
 // along body-down. ang = root direction in radians (y down). Cloth lives in the body frame,
 // so on a knocked-down (rotated) body it lies along the back instead of poking into the floor.
-function wxTail(ctx, x, y, ang, len, w0, w1, phase, amp, droop, fill, n = 8, bulge = 0) {
+// lw > 0 adds an ink edge (stiff gear such as the archetypes' robe panels and tassets).
+export function wxTail(ctx, x, y, ang, len, w0, w1, phase, amp, droop, fill, n = 8, bulge = 0, lw = 0) {
   if (wxLay) { ang = wxToward(ang, Math.PI * 0.45, 0.85); amp *= 0.4; }
   const dx = Math.cos(ang), dy = Math.sin(ang), px = -dy, py = dx;
   const gy = droop * len;
@@ -126,8 +135,9 @@ function wxTail(ctx, x, y, ang, len, w0, w1, phase, amp, droop, fill, n = 8, bul
     xs[i] = x + dx * len * u + px * wave;
     ys[i] = y + dy * len * u + py * wave + gy * u * u;
   }
-  if (wxOutline) wxRibbon(ctx, n, w0, w1, bulge, 1.3, INK);
+  if (wxOutline && lw <= 0) wxRibbon(ctx, n, w0, w1, bulge, 1.3, INK);
   wxRibbon(ctx, n, w0, w1, bulge, 0, fill);
+  if (lw > 0) { ctx.lineWidth = lw; ctx.strokeStyle = INK; ctx.lineJoin = 'round'; ctx.stroke(); }
 }
 function wxRibbon(ctx, n, w0, w1, bulge, grow, fill) {
   const xs = WX_XS, ys = WX_YS;
@@ -147,15 +157,15 @@ function wxRibbon(ctx, n, w0, w1, bulge, grow, fill) {
   ctx.fillStyle = fill;
   ctx.fill();
 }
-function wxAlong(a, b, u, out) { out[0] = a[0] + (b[0] - a[0]) * u; out[1] = a[1] + (b[1] - a[1]) * u; return out; }
+export function wxAlong(a, b, u, out) { out[0] = a[0] + (b[0] - a[0]) * u; out[1] = a[1] + (b[1] - a[1]) * u; return out; }
 function wxPoint(out, x, y) { out[0] = x; out[1] = y; return out; }
-function wxToward(a, target, f) {
+export function wxToward(a, target, f) {
   let d = target - a;
   while (d > Math.PI) d -= TAU;
   while (d < -Math.PI) d += TAU;
   return a + d * f;
 }
-function wxToe(knee, foot, len, out) {
+export function wxToe(knee, foot, len, out) {
   let sx = foot[0] - knee[0], sy = foot[1] - knee[1];
   const sl = len2(sx, sy) || 1;
   sx /= sl; sy /= sl;
@@ -166,7 +176,7 @@ function wxToe(knee, foot, len, out) {
   out[0] = foot[0] + dx / dl * len; out[1] = foot[1] + dy / dl * len;
   return out;
 }
-function wxExtend(M, x, pad) {
+export function wxExtend(M, x, pad) {
   if (x - pad < M.left) M.left = x - pad;
   if (x + pad > M.right) M.right = x + pad;
 }

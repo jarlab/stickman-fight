@@ -1,5 +1,17 @@
-import { ARENAS, ELEMENTS } from './data.js';
+import { ARENAS, ELEMENTS, ITEM_EFFECTS, pickupIndex, ARCHETYPE_RULES, CAPTIVE, headIconLift } from './data.js';
 import { drawFighterBody, clothDrive, KO_POSE, KO_BOX, INK, PAPER, FLASH } from './fighter-art.js';
+import { VFX, fxProjectileTrail, fxSlash, fxDustLand, fxGuardSpark, fxParryFlash, fxHitLight, fxHitHeavy } from './vfx-art.js';
+import { WEAPON_ART, drawWeaponPickupArt, drawHeldWeaponArt, drawWornArmorArt, drawThrownWeaponArt, drawWeaponShardArt,
+  drawWeaponBreakPuff, drawLanternBurst } from './weapon-art.js';
+import { CONSUMABLES, CP_STILL, CP_DISSOLVE, CP_FLING_LIFE, CP_SPARKLE_TIME, drawConsumable, drawConsumableItem, consumePose,
+  drawConsumeHeld, consumeStow, consumeFling, drawFlung, drawConsumeSparkle, consumableFade, drawDespawnPuff, drawIncenseAura,
+  drawConsumableBuff } from './pickup-art.js';
+import { grabCandidate, rescueCandidate, canBeGrabbed } from './grapples.js';
+import { ARCHETYPES, ARCHETYPE_POSES, ARCHETYPE_KO_BOX, ENEMY_PROJECTILES, ENEMY_GROUND_EFFECTS, ENEMY_POST_EFFECTS, IRON_BELL_CROWN,
+  drawArchetypeBody, drawArchetypeTrail, drawEnemyProjectile, drawEnemyProjectileShadow, drawEnemyEffect, drawRescuePrompt,
+  ironBellSize, drawIronBell } from './enemy-art.js';
+import { ARENA_PACK_PALETTES, AP_CARD_TOP, drawArenaPackBackground, drawArenaPackScenery, drawArenaPackAmbient,
+  drawArenaPackTitleCard } from './arena-art.js';
 
 const WIDTH = 1280;
 const HEIGHT = 720;
@@ -44,13 +56,75 @@ function noise(i) {
   return n - Math.floor(n);
 }
 
+function isArenaKey(key) {
+  return typeof key === 'string' && (Object.hasOwn(PALETTES, key) || Object.hasOwn(ARENA_PACK_PALETTES, key));
+}
+
 function elementColor(element) {
   return ELEMENTS[element]?.color || COLORS[element] || COLORS.air;
+}
+// An archetype's accent (src/enemy-art.js ARCHETYPES) stands in for the element colour at every
+// element-coloured fighter site: the guard bubble, player marker, gather, recovery and launch trails.
+function fighterColor(fighter) {
+  return fighter?.archetype ? ARCHETYPES[fighter.archetype]?.accent || COLORS.air : elementColor(fighter?.element);
 }
 
 function groundDepth(entity) {
   return Number.isFinite(entity.depth) ? entity.depth : (entity.y || 0) + (entity.z || 0);
 }
+
+// Legacy effect kinds drawn after the depth-sorted objects (the rest go in the ground pass).
+// kind 'vfx' effects route by VFX[fx].layer instead (see Renderer.draw).
+// The archetype post effects (src/enemy-art.js: tether, Iron Bell, shield clang, smoke, freed
+// burst) draw with them, over the bodies, so the smoke covers the bandit; the heal sigil and stuck
+// arrows (ENEMY_GROUND_EFFECTS) draw in the ground pass, under the feet.
+const POST_EFFECT_KINDS = new Set(['impact', 'slash', 'consume', ...ENEMY_POST_EFFECTS]);
+// Consumables (src/pickup-art.js). A planted censer field takes its team's colour; the censer
+// prop fades over CENSER_FADE seconds once its field is nearly out, its sticks burnt down (no
+// smoke) for the last CENSER_EMBERS. At most MAX_FLUNG flung vessels or knocked items at once.
+const AURA_COLORS = { player: '#56905d', enemy: '#c5573f' };
+const CENSER_FADE = .8;
+// Where the short one-hand carries ride during a use (Renderer.stowAxis): in the sash, pose
+// units behind (back; negative is in front) and above (up) the hip, the axis tipped tip rad
+// below straight back. The knife pair is tucked in at the back, blades out behind; a throwing
+// stone rides at the front like a pouch (upright art keeps it level whatever the axis), where
+// neither the back arm nor the legs cover it.
+const SASH_STOW = { knives: { back: 7, up: 4, tip: 0.3 }, stone: { back: -12, up: 2, tip: 0 } };
+const CENSER_EMBERS = 1.2;
+const MAX_FLUNG = 16;
+// The pickup the player's E would take now (Game.consumeBuffer: a grab first, then Game.pickup's
+// grounded test and its nearest-in-reach choice, pickupIndex), if any: none mid-air, while stunned, knocked down,
+// frozen, held or holding, during a use, or with a dizzy opponent E would grab instead.
+// A bound villager E would start freeing (rescue) takes E before any item.
+function pickupTarget(player, weapons, enemies, rescue = null) {
+  if (!player || player.dead || !(player.hp > 0) || player.consume || !player.grounded ||
+      player.stun > 0 || player.knockdown > 0 || player.frozen > 0 || player.grabTarget != null || player.grabbedBy != null) return null;
+  if (rescue || player.rescue || grabCandidate(player, enemies)) return null;
+  const index = pickupIndex(weapons, player.x, player.depth);
+  return index < 0 ? null : weapons[index];
+}
+const EFFECT_PARTICLE_KINDS = new Set(['ring', 'shockwave', 'impact', 'slash', 'vfx']);
+// Weapon debris and bursts spawned as particles by the engine (drawn with src/weapon-art.js).
+const WEAPON_PARTICLE_KINDS = new Set(['shard', 'breakPuff', 'lanternBurst']);
+// Boss waves whose release is drawn by a vfx (ice columns, eruptions) instead of the hazard art.
+const VFX_HAZARD_MOVES = new Set(['ice-lance', 'triple-eruption']);
+// Top-layer vfx anchors drawn in depth order with the objects (the rest draw over them).
+const DEPTH_SORTED_ANCHORS = new Set(['ground', 'any']);
+// One reused params object for every fx draw call (no per-frame allocation).
+const VFX_KEYS = ['dir', 'element', 'scale', 'heavy', 'seed', 'color', 'variant', 'floor', 'radius', 'life', 'reverse', 'vx', 'vy', 'r', 'len', 'turn'];
+const VFX_P = { layer: undefined, reduced: false };
+const NO_PARAMS = {};
+function vfxParams(src, defaults, layer, reduced) {
+  for (const key of VFX_KEYS) VFX_P[key] = src[key] !== undefined ? src[key] : defaults[key];
+  VFX_P.layer = layer;
+  VFX_P.reduced = reduced;
+  return VFX_P;
+}
+const TRAIL_P = { vx: 1, vy: 0, element: 'air', r: 9, turn: 0, reduced: false };
+// The trail keeps its approved size (r 9, an earth boulder 10) whatever the ball's body radius,
+// so its curls, drips, grit and licks stay legible; it starts that far inside the body's rim.
+const TRAIL_R = { earth: 10 };
+const TRAIL_R_DEFAULT = 9;
 
 function hazardPath(ctx, hazard) {
   ctx.beginPath();
@@ -75,6 +149,11 @@ function poseBox(pose, pad = 50) {
   POSE_BOX[0] = x0 - pad; POSE_BOX[1] = y0 - pad; POSE_BOX[2] = x1 + pad; POSE_BOX[3] = y1 + pad;
   return POSE_BOX;
 }
+// A knocked-down fighter keeps what it carries: the held weapon lies along the body from the
+// front fist (KO_POSE.hand, the fist 23/52 along the axis), so it rests on the floor beside it.
+const KO_WEAPON_ANGLE = -Math.PI / 2 - 0.12;
+const KO_WEAPON = [[KO_POSE.hand[0] - Math.cos(KO_WEAPON_ANGLE) * 23, KO_POSE.hand[1] - Math.sin(KO_WEAPON_ANGLE) * 23],
+  [KO_POSE.hand[0] + Math.cos(KO_WEAPON_ANGLE) * 29, KO_POSE.hand[1] + Math.sin(KO_WEAPON_ANGLE) * 29]];
 const clamp01 = value => Math.max(0, Math.min(1, value));
 const smooth = value => { const t = clamp01(value); return t * t * (3 - 2 * t); };
 const mix = (a, b, t) => a + (b - a) * t;
@@ -169,6 +248,34 @@ const BOSS_MOVE_POSES = {
   'triple-eruption': BOSS_POSES.earth,
 };
 
+// Archetype poses (src/enemy-art.js ARCHETYPE_POSES): the stance replaces the element stance,
+// a moving body layers .run (its arms and weapon carry; feet and knees stay the shared stride)
+// over the stride, and each action takes { wind, strike } by variant: the string and the ranged
+// throws use wind -> strike; the warden's rush leans from his stance into .special; the volley,
+// the meteor whirl and the Iron Bell hold .special; the smoke throw winds into it. The Chain Ox's
+// hook throw winds like his lash, then flings the arm out with the meteor chain left hanging
+// from the fist to the floor (the stance's chain angle): the hook's own chain flies out level.
+const ARCH_RUN = {};
+const ARCH_STYLES = {};
+for (const [kind, P] of Object.entries(ARCHETYPE_POSES)) {
+  const run = {};
+  for (const key of Object.keys(P.run)) if (!/Foot|Knee/.test(key)) run[key] = P.run[key];
+  ARCH_RUN[kind] = run;
+  const melee = { wind: P.wind, strike: P.strike };
+  const hook = { wind: P.wind, strike: { ...P.strike, weaponAngle: P.stance.weaponAngle ?? P.strike.weaponAngle } };
+  ARCH_STYLES[kind] = { melee, arrow: melee, hook, talisman: melee, rush: { wind: P.stance, strike: P.special },
+    volley: { wind: P.special, strike: P.special }, whirl: { wind: P.special, strike: P.special }, bell: { wind: P.special, strike: P.special },
+    smoke: { wind: P.wind, strike: P.special } };
+}
+// The talisman slip drawn by a sealed fighter's head (src/enemy-art.js talisman art, reused).
+const SEAL_SLIP = { kind: 'talisman', x: 0, y: 0, vx: 1, vy: 0 };
+// An archetype shot handed to drawEnemyProjectile: the art aims along (vx, vy), and on screen a
+// shot also moves down by its depth travel (vy + vDepth, as the elemental shots and the stuck
+// arrow's angle read it). Reused for every draw.
+const ENEMY_SHOT = { kind: '', x: 0, y: 0, vx: 1, vy: 0, ox: undefined, oy: undefined };
+// While a captive is freed by the player, the player reaches for the cangue.
+const RESCUE_POSE = { lean: 6, drop: 6, elbow: [18, -31], hand: [29, -35], rearElbow: [13, -31], rearHand: [26, -38], rearFoot: [-15, -1], frontFoot: [14, -1] };
+
 function poseWith(base, overrides) {
   const pose = {};
   for (const key of POSE_JOINTS) pose[key] = [...base[key]];
@@ -192,7 +299,9 @@ function blendPose(a, b, amount) {
 
 function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
   const frozen = fighter.frozen > 0;
-  const speed = frozen ? 0 : Math.min(1, Math.hypot(fighter.vx || 0, fighter.vDepth || fighter.vd || 0) / 240);
+  const consume = fighter.consume;
+  // A fighter using a consumable stands in its stance (it cannot step while the use plays).
+  const speed = frozen || consume ? 0 : Math.min(1, Math.hypot(fighter.vx || 0, fighter.vDepth || fighter.vd || 0) / 240);
   const phase = time * (fighter.running ? 14 : 10) + (Number(fighter.id) || 0);
   const stride = fighter.grounded && !fighter.stun && !frozen ? Math.sin(phase) * speed : 0;
   const bob = reducedMotion || frozen ? 0 : Math.sin(time * 3.5) * (speed < 0.1 ? 0.7 : 0);
@@ -201,9 +310,22 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
     hip: [lean * 0.3, -27 + bob], shoulder: [lean, -45 + bob], head: [lean + 1, -57 + bob],
     rearFoot: fighter.grounded ? [-11 - stride * 11, -1] : [-15, -14], frontFoot: fighter.grounded ? [11 + stride * 11, -1] : [12, -9],
     rearKnee: [-10 - stride * 3, -15 - Math.abs(stride) * 3], frontKnee: [8 + stride * 5, -15],
-    rearElbow: [-14 - stride * 3, -32], rearHand: [-9 - stride * 5, -27], elbow: [14 + stride * 3, -35], hand: [19 - stride * 4, -42], weaponAngle: -1.24,
+    rearElbow: [-14 - stride * 3, -32], rearHand: [-9 - stride * 5, -27], elbow: [14 + stride * 3, -35], hand: [19 - stride * 4, -42],
+    // Idle carry angle per weapon (the twin knives rest lower, WEAPON_ART.knives.restAngle).
+    weaponAngle: WEAPON_ART[fighter.weapon]?.restAngle ?? -1.24,
   };
-  if (fighter.grounded && speed < 0.15) rest = poseWith(rest, FIGHTING_STANCES[fighter.element] || FIGHTING_STANCES.air);
+  const arch = fighter.archetype ? ARCHETYPE_POSES[fighter.archetype] : null;
+  if (arch) {
+    // A bound villager kneels in his cangue; freed he stands and hobbles.
+    if ((fighter.grounded && speed < 0.15) || (fighter.archetype === 'captive' && !fighter.freed)) rest = poseWith(rest, arch.stance);
+    else if (fighter.grounded) rest = poseWith(rest, ARCH_RUN[fighter.archetype]);
+  } else if (fighter.grounded && speed < 0.15) rest = poseWith(rest, FIGHTING_STANCES[fighter.element] || FIGHTING_STANCES.air);
+  // The use pose (src/pickup-art.js) keys over the stance and carries the item track
+  // (pose.item, pose.release, pose.remnant); a fresh pose, safe to keep in fighterAnimations.
+  if (consume) {
+    const pose = consumePose(rest, consume.kind, clamp01((consume.t || 0) / (consume.duration || 1)), consume.from);
+    return { pose, stroke: 0, style: null, recoil: 0, speed: 0 };
+  }
   if (fighter.recoveryRoll) {
     const progress = clamp01(fighter.recoveryRoll.t / fighter.recoveryRoll.duration);
     const tuck = poseWith(rest, { hip: [-4, -17], shoulder: [-8, -29], head: [5, -33],
@@ -213,6 +335,7 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
     return { pose: blendPose(rest, tuck, amount), stroke: 0, style: null, recoil: 0, speed };
   }
   if (fighter.guard) rest = poseWith(rest, { lean: -2, drop: 2, rearElbow: [6, -39], rearHand: [14, -51], elbow: [12, -35], hand: [16, -51], rearFoot: [-15, -1], frontFoot: [13, -1] });
+  if (fighter.rescue) rest = poseWith(rest, RESCUE_POSE);
   if (fighter.grabTarget != null) rest = poseWith(rest, { lean: 5, drop: 3,
     elbow: [22, -38], hand: [34, -39], rearElbow: [16, -31], rearHand: [30, -33],
     rearFoot: [-18, -1], frontFoot: [17, -1] });
@@ -234,6 +357,7 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
       wind: { lean: -3, drop: 3, elbow: [-7, -34], hand: [-9, -43], rearElbow: [20, -33], rearHand: [33, -38] },
       strike: { lean: 10, drop: 5, elbow: [24, -32], hand: [39, -34], rearElbow: [20, -33], rearHand: [33, -38], frontFoot: [20, -1] } };
     if (kind === 'special' || kind === 'burst') style = CAST_POSES[fighter.element] || CAST_POSES.air;
+    if (arch && (kind === 'melee' || kind === 'special' || kind === 'burst')) style = ARCH_STYLES[fighter.archetype][action?.variant] || ARCH_STYLES[fighter.archetype].melee;
     if (!fighter.weapon && (action?.variant === 'launcher' || action?.variant === 'aerial')) {
       let poseKey = action.move?.pose;
       if (poseKey === 'airHeel' && action.airIndex >= 2) poseKey = 'airDiveHeel';
@@ -262,6 +386,14 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
       pose = blendPose(follow, rest, recovery);
       stroke = Math.max(0, 0.85 - recovery * 2.4);
     }
+  }
+
+  // Held archetype states: the priest's heal channel and the monk's Iron Bell (.special), a
+  // freed villager's cheer (.special) and his call for help (.strike: head up).
+  if (arch && !action) {
+    const hold = fighter.channel || fighter.bellTimer > 0 || (fighter.freed && fighter.cheer > 0) ? arch.special
+      : fighter.calling > 0 && !fighter.freed ? arch.strike : null;
+    if (hold) { pose = poseWith(rest, hold); stroke = 0; style = null; }
   }
 
   const bossAction = fighter.bossAction;
@@ -319,6 +451,8 @@ function fighterPose(fighter, time, reducedMotion, transitionFrom = null) {
     pose.frontKnee[0] += hitDirection * 5 * recoil;
     pose.elbow = pointMix(pose.elbow, [hitDirection * 24, -29 + compression], recoil);
     pose.hand = pointMix(pose.hand, [hitDirection * 36, -21 + compression], recoil);
+    // An archetype's long weapon swings clear of the floor while it reels (.hit.weaponAngle).
+    if (arch?.hit?.weaponAngle !== undefined) pose.weaponAngle = mix(pose.weaponAngle, arch.hit.weaponAngle, Math.min(1, recoil * 2));
     stroke *= 1 - recoil;
   }
   return { pose, stroke, style, recoil, speed };
@@ -411,20 +545,46 @@ export class Renderer {
     canvas.height = HEIGHT * this.pixelRatio;
     this.backgrounds = new Map();
     this.fighterAnimations = new WeakMap();
+    // Flung vessels and knocked-out items (consumeFling entries + t0): cosmetic, renderer-owned.
+    this.flung = [];
+    this.flungUses = new WeakSet();
+    // Live fighters by id for effects that follow one (slashes, command icons); refreshed per frame.
+    this.fighterById = new Map();
   }
 
+  // The arena drawn: a sanctuary (PALETTES) or a pack stage (src/arena-art.js). The state's own
+  // arena wins, as a key or as an ARENAS entry, over settings.arena; a pack stage is matched by
+  // its own key before any element fallback: it carries an element, but its art is its own.
   arenaKey(state) {
     const arena = state.arena;
-    if (typeof arena === 'string' && PALETTES[arena]) return arena;
-    if (PALETTES[state.settings?.arena]) return state.settings.arena;
+    if (isArenaKey(arena)) return arena;
+    if (arena && typeof arena === 'object') for (const key in ARENAS) if (ARENAS[key] === arena && isArenaKey(key)) return key;
+    if (isArenaKey(state.settings?.arena)) return state.settings.arena;
     if (PALETTES[arena?.element]) return arena.element;
     if (PALETTES[arena?.id]) return arena.id;
     return 'air';
   }
 
+  // The cached static layers of an arena; draw() blits them over the 1280x720 frame.
   background(key) {
     if (this.backgrounds.has(key)) return this.backgrounds.get(key);
     const canvas = document.createElement('canvas');
+    // A pack stage draws its own floor, edge posts and grain on the same playfield geometry. Its
+    // cache is built at the device pixel ratio (as the approved preview glue does), so its fine
+    // strings, stars and roof edges stay as sharp on a 2x screen as the scenery drawn live over
+    // it. Only the latest pack stage keeps its cache (about 14.7 MB at 2x); going back to an
+    // earlier one rebuilds it once.
+    if (ARENA_PACK_PALETTES[key]) {
+      const pr = this.pixelRatio;
+      canvas.width = WIDTH * pr;
+      canvas.height = HEIGHT * pr;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(pr, pr);
+      drawArenaPackBackground(ctx, key);
+      for (const other of [...this.backgrounds.keys()]) if (ARENA_PACK_PALETTES[other]) this.backgrounds.delete(other);
+      this.backgrounds.set(key, canvas);
+      return canvas;
+    }
     canvas.width = WIDTH;
     canvas.height = HEIGHT;
     const ctx = canvas.getContext('2d');
@@ -589,51 +749,156 @@ export class Renderer {
     const time = state.time || 0;
     ctx.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0);
     ctx.globalAlpha = 1;
-    ctx.drawImage(this.background(key), 0, 0);
+    ctx.drawImage(this.background(key), 0, 0, WIDTH, HEIGHT);
+    // A pack stage's anchored moving parts (banners, lanterns, chains, sprays, drips, smoke) go
+    // with the unshaken background, so a heavy hit never shakes them off their poles and strings.
+    if (ARENA_PACK_PALETTES[key]) drawArenaPackScenery(ctx, key, reducedMotion ? 0 : time);
     ctx.save();
     const shake = reducedMotion ? 0 : Math.min(12, state.shake || 0);
     if (shake > 0) ctx.translate(Math.sin(time * 173) * shake, Math.cos(time * 137) * shake * 0.65);
 
     this.drawAmbient(time, key, reducedMotion);
-    const fighters = [...(state.enemies || []), state.player].filter(fighter => fighter && !fighter.dead);
+    this.time = time;
+    // Bound (and freed) villagers draw with the fighters.
+    const captives = state.captives || [];
+    const living = [...(state.enemies || []), ...captives, state.player].filter(fighter => fighter && !fighter.dead);
+    this.fighterById.clear();
+    for (const fighter of living) this.fighterById.set(fighter.id, fighter);
+    // A summoned enemy stays hidden until its spawn swirl reveals it.
+    const fighters = living.filter(fighter => !(fighter.spawnReveal > 0));
     const corpses = state.corpses || [];
     const weapons = state.weapons || [];
     const projectiles = state.projectiles || [];
+    const effects = state.effects || [];
+    const auras = state.auras || [];
+    // E's target: a dizzy opponent, else a bound villager (his rescue prompt), else the nearest item.
+    const player = state.player;
+    this.rescueTarget = player?.rescue ? captives.find(c => c.id === player.rescue.id) || null
+      : player && !grabCandidate(player, state.enemies || []) ? rescueCandidate(player, captives) : null;
+    const target = pickupTarget(player, weapons, state.enemies || [], this.rescueTarget);
+    // Flung vessels live on the game clock (they pause with it); a new run (clock reset) drops them.
+    this.flung = this.flung.filter(f => !f.done && time >= f.t0 && time - f.t0 <= CP_FLING_LIFE);
+    // Planted censer fields lie on the floor, under every shadow.
+    for (const aura of auras) {
+      drawIncenseAura(ctx, aura.x, aura.depth, reducedMotion ? 0 : time, clamp01(aura.life / aura.maxLife), AURA_COLORS[aura.team] || AURA_COLORS.player);
+    }
     for (const fighter of fighters) this.drawGroundShadow(fighter, 'fighter');
     for (const corpse of corpses) this.drawGroundShadow(corpse, 'corpse');
-    for (const weapon of weapons) this.drawGroundShadow(weapon, 'pickup');
-    for (const projectile of projectiles) if (projectile.kind === 'weapon') this.drawGroundShadow(projectile, 'projectile');
-    for (const effect of state.effects || []) if (effect.kind !== 'impact' && effect.kind !== 'slash') this.drawEffect(effect, reducedMotion);
+    for (const weapon of weapons) this.drawGroundShadow(weapon, 'pickup', reducedMotion);
+    // The planted censer's shadow fades and shrinks with the prop (drawCenser's CENSER_FADE).
+    for (const aura of auras) {
+      const fade = clamp01(aura.life / CENSER_FADE);
+      if (fade > 0) this.drawGroundShadow({ x: aura.x, y: aura.depth, depth: aura.depth, kind: 'incense', fade }, 'pickup');
+    }
+    for (const projectile of projectiles) {
+      if (projectile.kind === 'weapon') this.drawGroundShadow(projectile, 'projectile');
+      else if (ENEMY_PROJECTILES.has(projectile.kind)) drawEnemyProjectileShadow(ctx, projectile);
+    }
+    for (const effect of effects) if (effect.kind !== 'vfx' && !POST_EFFECT_KINDS.has(effect.kind)) this.drawEffect(effect, reducedMotion);
     const labeledBosses = new Set();
     for (const hazard of state.bossHazards || []) {
       const label = hazard.delay > 0 && !labeledBosses.has(hazard.ownerId);
       this.drawBossHazard(hazard, time, reducedMotion, label);
       if (label) labeledBosses.add(hazard.ownerId);
     }
-    const objects = [
-      ...fighters.map(entity => ({ entity, kind: 'fighter' })),
-      ...corpses.map(entity => ({ entity, kind: 'corpse' })),
-      ...weapons.map(entity => ({ entity, kind: 'pickup' })),
-      ...projectiles.map(entity => ({ entity, kind: 'projectile' })),
-    ].sort((a, b) => groundDepth(a.entity) - groundDepth(b.entity));
-    for (const { entity, kind } of objects) {
+    const objects = [];
+    for (const entity of fighters) objects.push({ entity, kind: 'fighter', depth: groundDepth(entity) });
+    for (const entity of corpses) objects.push({ entity, kind: 'corpse', depth: groundDepth(entity) });
+    for (const entity of weapons) objects.push({ entity, kind: 'pickup', depth: groundDepth(entity) });
+    for (const entity of projectiles) objects.push({ entity, kind: 'projectile', depth: groundDepth(entity) });
+    // The planted censer sorts just in front of its planter; a flung item by its floor line.
+    for (const entity of auras) objects.push({ entity, kind: 'censer', depth: entity.depth + 1 });
+    for (const entity of this.flung) objects.push({ entity, kind: 'flung', depth: entity.floor });
+    // Split effects sandwich whoever stands on their floor point: the back layer just behind
+    // that depth, the front layer just in front. Floor-sorted top effects (dust, spawn, smoke)
+    // sit just in front of their floor point, so they never paint over fighters nearer the
+    // camera. Hit sparks and KO bursts stay over everything (see DEPTH_SORTED_ANCHORS).
+    for (const entity of effects) {
+      const def = entity.kind === 'vfx' && VFX[entity.fx];
+      if (!def) continue;
+      const depth = this.vfxDepth(entity);
+      if (def.layer === 'split') {
+        objects.push({ entity, kind: 'vfx', layer: 'back', depth: depth - 0.01 });
+        objects.push({ entity, kind: 'vfx', layer: 'front', depth: depth + 0.01 });
+      } else if (def.layer === 'top' && DEPTH_SORTED_ANCHORS.has(def.anchor)) objects.push({ entity, kind: 'vfx', layer: undefined, depth: depth + 0.01 });
+    }
+    objects.sort((a, b) => a.depth - b.depth);
+    for (const { entity, kind, layer } of objects) {
       if (kind === 'fighter') this.drawFighter(entity, time, reducedMotion, state.player);
       else if (kind === 'corpse') this.drawCorpse(entity);
-      else if (kind === 'pickup') this.drawWeaponPickup(entity, reducedMotion ? 0 : time);
+      else if (kind === 'pickup') this.drawWeaponPickup(entity, reducedMotion ? 0 : time, reducedMotion, entity === target);
+      else if (kind === 'censer') this.drawCenser(entity, time, reducedMotion);
+      else if (kind === 'flung') {
+        ctx.globalAlpha = 1;
+        if (!drawFlung(ctx, entity, time - entity.t0, time)) entity.done = true;
+      } else if (kind === 'vfx') this.drawVfx(entity, layer, reducedMotion);
       else this.drawProjectile(entity, time, reducedMotion);
     }
-    for (const effect of state.effects || []) if (effect.kind === 'impact' || effect.kind === 'slash') this.drawEffect(effect, reducedMotion);
+    for (const effect of effects) {
+      if (effect.kind === 'vfx') {
+        const def = VFX[effect.fx];
+        if (def?.layer === 'top' && !DEPTH_SORTED_ANCHORS.has(def.anchor)) this.drawVfx(effect, undefined, reducedMotion);
+      } else if (POST_EFFECT_KINDS.has(effect.kind)) this.drawEffect(effect, reducedMotion);
+    }
     for (const particle of state.particles || []) this.drawParticle(particle, reducedMotion);
     for (const floater of state.floaters || []) this.drawFloater(floater);
+    // Command icons float over everything, re-anchored to their fighter's head each frame.
+    for (const effect of effects) if (effect.kind === 'vfx' && VFX[effect.fx]?.layer === 'head') this.drawVfx(effect, undefined, reducedMotion);
     ctx.restore();
 
     this.drawEdgeDetails(state, key);
-    if (state.banner && state.bannerTime > 0) this.drawBanner(state.banner, state.bannerTime);
+    if (state.banner && state.bannerTime > 0) {
+      this.drawBanner(state.banner, state.bannerTime);
+      // A pack stage's name card hangs under the banner that opens it (state.stageCard: wave 1
+      // with no guardian) and fades with it. Story chapters visit only the four sanctuaries and
+      // always bring a guardian, so they never show it; drawArenaPackTitleCard's subtitle-only
+      // variant is there for story chapters on pack stages, should they come.
+      if (state.stageCard && ARENA_PACK_PALETTES[key]) {
+        drawArenaPackTitleCard(ctx, key, Math.min(1, state.bannerTime * 2), AP_CARD_TOP);
+      }
+    }
+  }
+
+  // The fighter an effect follows (attacker for slashes, owner for command icons), if alive.
+  vfxOwner(effect) {
+    return effect.followId != null ? this.fighterById.get(effect.followId) || null : null;
+  }
+
+  vfxDepth(effect) {
+    const owner = this.vfxOwner(effect);
+    return owner ? groundDepth(owner) : Number.isFinite(effect.depth) ? effect.depth : effect.y || 0;
+  }
+
+  // Draws a kind 'vfx' effect (VFX[fx] from src/vfx-art.js) at t = 1 - life / maxLife.
+  // layer: 'back' | 'front' for split effects, undefined for the whole effect. A delayed
+  // effect (life above maxLife) is not drawn yet. Inked effects draw at full alpha.
+  drawVfx(effect, layer, reducedMotion = false) {
+    const def = VFX[effect.fx];
+    if (!def) return;
+    const maxLife = effect.maxLife || def.life;
+    const t = 1 - (effect.life ?? 0) / maxLife;
+    if (!(t >= 0 && t <= 1)) return;
+    const owner = this.vfxOwner(effect);
+    let x = effect.x, y = effect.y;
+    if (owner && def.layer === 'head') {
+      x = owner.x;
+      y = owner.y - (owner.h || 66) - headIconLift(owner);
+    } else if (owner) {
+      x = owner.x + (effect.dx || 0);
+      y = owner.y + (effect.dy || 0);
+    }
+    this.ctx.globalAlpha = 1;
+    def.draw(this.ctx, x, y, t, vfxParams(effect.p || NO_PARAMS, def.p || NO_PARAMS, layer, reducedMotion));
   }
 
   drawAmbient(time, element, reducedMotion) {
     const ctx = this.ctx;
     const t = reducedMotion ? 0 : time;
+    // A pack stage has its own free air particles (falling leaves, wind, dust, motes).
+    if (ARENA_PACK_PALETTES[element]) {
+      drawArenaPackAmbient(ctx, element, t);
+      return;
+    }
     ctx.save();
     ctx.globalAlpha = 0.3;
     for (let i = 0; i < 11; i += 1) {
@@ -691,7 +956,9 @@ export class Renderer {
       ctx.fillRect(-24, 15, 48, 5);
       ctx.fillStyle = '#ffe6a4';
       ctx.fillRect(-23, 16, 46 * progress, 3);
-    } else {
+    } else if (!VFX_HAZARD_MOVES.has(hazard.move)) {
+      // Ice-lance columns and eruptions are drawn by their vfx, in reduced motion too, so the
+      // released footprint is their only other cue.
       ctx.globalAlpha = fade * (reducedMotion ? 0.65 : 0.85);
       if (reducedMotion) {
         elementGlyph(ctx, hazard.element, 0, -Math.min(hazard.height * 0.45, 36), 14, color, 2.5);
@@ -779,15 +1046,21 @@ export class Renderer {
     }
   }
 
-  drawGroundShadow(entity, kind) {
+  // A pickup's shadow shrinks with its despawn blink (consumableFade); a consumable's radius is
+  // CONSUMABLES[kind].shadow, a weapon's WEAPON_ART[kind].shadow.
+  drawGroundShadow(entity, kind, reducedMotion = false) {
     const ctx = this.ctx;
     const depth = groundDepth(entity);
     const height = Math.max(0, entity.z || depth - entity.y || 0);
     const scale = (entity.h || 66) / 66;
-    const radius = kind === 'pickup' ? (entity.kind === 'crate' ? 25 : 17) : kind === 'projectile' ? 14 : (entity.recoveryRoll ? 25 : entity.knockdown > 0 || kind === 'corpse' ? 31 : 22) * scale;
+    // entity.fade (0..1): an extra fade-out (the planted censer's), on alpha and size.
+    const extra = entity.fade ?? 1;
+    const radius = kind === 'pickup'
+      ? (CONSUMABLES[entity.kind]?.shadow ?? WEAPON_ART[entity.kind]?.shadow ?? 17) * Math.max(0.4, consumableFade(Number.isFinite(entity.life) ? entity.life : 99, reducedMotion) * (0.4 + 0.6 * extra))
+      : kind === 'projectile' ? 14 : (entity.recoveryRoll ? 25 : entity.knockdown > 0 || kind === 'corpse' ? 31 : 22) * scale;
     const fade = Math.max(0.08, 0.2 - height / 1500);
     ctx.save();
-    ctx.globalAlpha = fade * (kind === 'corpse' ? Math.min(1, entity.life || 1) : 1);
+    ctx.globalAlpha = fade * extra * (kind === 'corpse' ? Math.min(1, entity.life || 1) : 1);
     ctx.fillStyle = INK;
     ctx.beginPath();
     ctx.ellipse(entity.x, depth + 2, radius * Math.max(0.65, 1 - height / 700), radius * 0.24, 0, 0, Math.PI * 2);
@@ -803,78 +1076,138 @@ export class Renderer {
     ctx.restore();
   }
 
-  drawWeaponPickup(weapon, time) {
+  // A pickup on the floor. Consumables are src/pickup-art.js drawings (bob, glint, rarity ring,
+  // category pip); weapons and the bracer are src/weapon-art.js drawings (light items bob; time
+  // 0, the reduced-motion clock, stills the bob and twinkle). Only near, the item the player's E
+  // would take, shows its prompt: a consumable's stroked E seal, a weapon's "E" badge. Every
+  // pickup blinks out over its last 5 s and dissolves in a paper wash (consumableFade; reduced
+  // motion: a steady fade).
+  drawWeaponPickup(weapon, time, reducedMotion = false, near = false) {
     const ctx = this.ctx;
-    const bob = Math.sin(time * 3 + weapon.x) * 3;
+    if (drawConsumable(ctx, weapon, time, near, reducedMotion)) return;
+    const life = Number.isFinite(weapon.life) ? weapon.life : 99;
+    const fade = consumableFade(life, reducedMotion);
+    if (!(fade > 0)) return;
     ctx.save();
-    ctx.translate(weapon.x, weapon.y + (weapon.kind === 'crate' ? 0 : bob));
-    ctx.globalAlpha = 0.18;
-    circle(ctx, 0, -14, 25, '#fffbe9');
-    ctx.globalAlpha = 1;
-    if (weapon.kind === 'crate') {
-      polygon(ctx, [[-20, -33], [14, -33], [21, -27], [21, 0], [-14, 0], [-20, -6]], '#b89160', INK, 2);
-      polygon(ctx, [[-20, -33], [14, -33], [21, -27], [-14, -27]], '#d7bb85', INK, 1.5);
-      polygon(ctx, [[-20, -33], [-14, -27], [-14, 0], [-20, -6]], '#9b774f', INK, 1.5);
-      line(ctx, [[-10, -22], [17, -5]], '#dfc394', 4);
-      line(ctx, [[-10, -5], [17, -22]], '#dfc394', 4);
-      for (const x of [-9, 16]) for (const y of [-21, -6]) circle(ctx, x, y, 1.5, INK);
-    } else if (weapon.kind === 'heal' || weapon.kind === 'energy') {
-      const healing = weapon.kind === 'heal';
-      const color = healing ? '#739762' : '#548fae';
-      ctx.fillStyle = '#c5ac7e';
-      ctx.fillRect(-4, -31, 8, 7);
-      polygon(ctx, [[-6, -26], [6, -26], [6, -20], [11, -14], [11, -4], [7, 0], [-7, 0], [-11, -4], [-11, -14], [-6, -20]], '#f8f2d9', INK, 2);
-      ctx.fillStyle = color;
-      ctx.fillRect(-8, -14, 16, 11);
-      circle(ctx, 0, -9, 6, color);
-      if (healing) {
-        line(ctx, [[-4, -9], [4, -9]], PAPER, 2.5);
-        line(ctx, [[0, -13], [0, -5]], PAPER, 2.5);
-      } else {
-        polygon(ctx, [[1, -15], [-4, -8], [0, -8], [-2, -3], [5, -10], [1, -10]], PAPER);
-      }
-      line(ctx, [[-6, -19], [-7, -16]], '#ffffff', 2);
-    } else {
-      this.drawHeldWeapon(weapon.kind, [-20, -1], [22, -27]);
+    ctx.globalAlpha = fade;
+    ctx.translate(weapon.x, weapon.y);
+    ctx.translate(0, drawWeaponPickupArt(ctx, weapon.kind, time, weapon.x));
+    if (near) {
+      ctx.globalAlpha = Math.min(1, fade + 0.3);
+      ctx.fillStyle = INK;
+      ctx.fillRect(-7, 8, 14, 14);
+      ctx.font = 'bold 10px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = PAPER;
+      ctx.fillText('E', 0, 19);
     }
-    ctx.fillStyle = INK;
-    ctx.fillRect(-7, 8, 14, 14);
-    ctx.font = 'bold 10px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = PAPER;
-    ctx.fillText('E', 0, 19);
     ctx.restore();
+    if (!reducedMotion && life < CP_DISSOLVE) drawDespawnPuff(ctx, weapon.x, weapon.y - 14, 1 - life / CP_DISSOLVE);
   }
 
-  drawHeldWeapon(kind, start, end, ctx = this.ctx) {
-    if (kind === 'crate') {
-      const x = (start[0] + end[0]) / 2;
-      const y = (start[1] + end[1]) / 2;
-      polygon(ctx, [[x - 14, y - 15], [x + 12, y - 15], [x + 16, y - 10], [x + 16, y + 13], [x - 10, y + 13], [x - 14, y + 8]], '#b89160', INK, 2);
-      line(ctx, [[x - 8, y - 8], [x + 10, y + 7]], '#e6c799', 4);
-      line(ctx, [[x + 10, y - 8], [x - 8, y + 7]], '#e6c799', 4);
-      return;
+  // A planted censer (an entry of state.auras) at its plant spot, mirrored and scaled like the
+  // planter's pose so the hand-off from the hand is seamless. It fades as its field runs out.
+  drawCenser(aura, time, reducedMotion = false) {
+    const ctx = this.ctx;
+    const fade = clamp01(aura.life / CENSER_FADE);
+    if (!(fade > 0)) return;
+    const scale = aura.scale || 1;
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.translate(aura.x, aura.depth);
+    ctx.scale((aura.facing < 0 ? -1 : 1) * scale, scale);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    drawConsumableItem(ctx, 'incense', reducedMotion ? 0 : time, null, reducedMotion || aura.life < CENSER_EMBERS ? CP_STILL : 0, 0);
+    ctx.restore();
+    if (!reducedMotion && aura.life < CP_DISSOLVE) drawDespawnPuff(ctx, aura.x, aura.depth - 15 * scale, 1 - aura.life / CP_DISSOLVE);
+  }
+
+  // start/end: the weapon axis in pose units (the fist sits 23/52 along it); t: the fighter's
+  // animation clock (tassels, streamer, frost motes, the lantern fuse), 0 to hold them still.
+  drawHeldWeapon(kind, start, end, ctx = this.ctx, t = 0) {
+    drawHeldWeaponArt(ctx, kind, start, end, t);
+  }
+
+  // The stowed weapon's axis while a consumable is used (consumeStow): poles and blades slung
+  // diagonally across the back; an upright carry (crate, mill stone, lantern) rides on the back
+  // like a pack; the knife pair and a throwing stone ride in the sash (SASH_STOW). Every axis is
+  // 52 units with the fist point 23/52 along (drawHeldWeaponArt's grip), so the art draws at full
+  // size.
+  stowAxis(pose, kind) {
+    const sash = SASH_STOW[kind];
+    if (sash) {
+      // Short one-hand carries would hide behind the torso on the back line: they ride in the
+      // sash instead (SASH_STOW), clear of the torso and the legs.
+      const h = pose.hip, s = pose.shoulder;
+      let tx = s[0] - h[0], ty = s[1] - h[1];
+      const l = Math.sqrt(tx * tx + ty * ty) || 1;
+      tx /= l; ty /= l;
+      const nx = ty, ny = -tx; // towards the back
+      const gx = h[0] + nx * sash.back + tx * sash.up, gy = h[1] + ny * sash.back + ty * sash.up;
+      const c = Math.cos(sash.tip), sn = Math.sin(sash.tip);
+      const dx = nx * c - tx * sn, dy = ny * c - ty * sn;
+      return [[gx - dx * 23, gy - dy * 23], [gx + dx * 29, gy + dy * 29]];
     }
-    line(ctx, [start, end], INK, 6);
-    line(ctx, [start, end], '#caa36b', 3);
-    if (kind === 'spear') {
-      const dx = end[0] - start[0];
-      const dy = end[1] - start[1];
-      const length = Math.hypot(dx, dy) || 1;
-      const ux = dx / length;
-      const uy = dy / length;
-      polygon(ctx, [[end[0] + ux * 13, end[1] + uy * 13], [end[0] - uy * 5 - ux * 4, end[1] + ux * 5 - uy * 4], [end[0] + uy * 5 - ux * 4, end[1] - ux * 5 - uy * 4]], '#e6eeeb', INK, 1.5);
-    } else {
-      circle(ctx, start[0], start[1], 3, '#e6dbb3');
-      circle(ctx, end[0], end[1], 3, '#e6dbb3');
+    if (!WEAPON_ART[kind]?.upright) return consumeStow(pose, kind);
+    const [a, b] = consumeStow(pose, 'crate');
+    const cx = (a[0] + b[0]) / 2, cy = (a[1] + b[1]) / 2;
+    return [[cx - 23, cy], [cx + 29, cy]];
+  }
+
+  // Flung vessels and knocked-out items (world objects drawn by drawFlung, depth-sorted on their
+  // floor line). A drained vessel leaves the hand when its pose first releases it; when a hit cuts
+  // a use short (the engine's consumeLost) the item flies out of the hand it was last drawn in.
+  // A new one draws at once, so the hand-off has no empty frame. Reduced motion: none.
+  trackFlings(fighter, previous, usePose, scale, facing, time) {
+    const c = fighter.consume;
+    if (c && usePose?.release?.[0] && !this.flungUses.has(c)) {
+      this.flungUses.add(c);
+      this.addFling(consumeFling(usePose, c.kind, c.variant, fighter.x, fighter.y, scale, facing, false), time);
     }
+    const lost = fighter.consumeLost;
+    const was = previous?.consume;
+    if (lost && previous && previous.lost !== lost.serial && was && was.kind === lost.kind && previous.usePose?.item?.[0]) {
+      this.addFling(consumeFling(previous.usePose, was.kind, was.variant, previous.x, previous.y, scale, previous.facing ?? facing, true), time);
+    }
+  }
+
+  addFling(fling, time) {
+    if (!fling) return;
+    fling.t0 = time;
+    this.flung.push(fling);
+    if (this.flung.length > MAX_FLUNG) this.flung.shift();
+    this.ctx.globalAlpha = 1;
+    drawFlung(this.ctx, fling, 0, time);
+  }
+
+  // Timed buffs at the torso (drawConsumableBuff): the elixir's gold ring, the gourd's qi
+  // ribbon, a censer field's rising crosses. layer 0 before the body (far half), 1 after it.
+  drawBuffs(fighter, h, t, layer) {
+    const ctx = this.ctx;
+    if (fighter.power > 0) drawConsumableBuff(ctx, 'pill', fighter.x, fighter.y, h, t, fighter.power / ITEM_EFFECTS.pill.power, layer);
+    if (fighter.qiFlow > 0) drawConsumableBuff(ctx, 'gourd', fighter.x, fighter.y, h, t, fighter.qiFlow / ITEM_EFFECTS.gourd.flow, layer);
+    if (fighter.censerRegen > 0) drawConsumableBuff(ctx, 'incense', fighter.x, fighter.y, h, t, fighter.censerRegen, layer);
+  }
+
+  // The consume sparkle over the fighter who used the item (a 'consume' effect).
+  drawConsumeEffect(effect, reducedMotion = false) {
+    const maxLife = effect.maxLife || CP_SPARKLE_TIME;
+    const p = 1 - (effect.life ?? 0) / maxLife;
+    if (!(p >= 0 && p < 1)) return;
+    const f = effect.followId != null ? this.fighterById.get(effect.followId) : null;
+    const x = f ? f.x : effect.x, y = f ? f.y : effect.y;
+    const facing = (f ? f.facing : effect.facing) < 0 ? -1 : 1;
+    this.ctx.globalAlpha = 1;
+    drawConsumeSparkle(this.ctx, effect.item, effect.variant, x, y, p, (f ? f.h : effect.h) || 66, facing, reducedMotion);
   }
 
   drawFighter(fighter, time, reducedMotion, player) {
     const ctx = this.ctx;
     const h = fighter.h || 66;
     const scale = h / 66;
-    const color = elementColor(fighter.element);
+    const color = fighterColor(fighter);
+    const arch = fighter.archetype || null;
     const facing = (fighter.recoveryRoll?.direction || fighter.facing) < 0 ? -1 : 1;
     const previous = this.fighterAnimations.get(fighter);
     const hitLag = (fighter.hitLag || 0) > 0;
@@ -893,7 +1226,13 @@ export class Renderer {
     const driveTarget = knockedDown ? (downAirborne ? 0.8 : 0) : clothDrive(travel, stroke, recoil);
     const drive = Number.isFinite(previous?.drive)
       ? mix(previous.drive, driveTarget, 1 - Math.exp(-(visualTime - previous.visualTime) * 12)) : driveTarget;
-    this.fighterAnimations.set(fighter, { action: fighter.action, time, visualTime, pose, transitionFrom, drive });
+    const consume = fighter.consume || null;
+    // The warden's brace glint eases in and out on the visual clock, like the cloth drive.
+    const brace = arch === 'guard' ? (Number.isFinite(previous?.brace)
+      ? mix(previous.brace, fighter.brace || 0, 1 - Math.exp(-(visualTime - previous.visualTime) * 10)) : fighter.brace || 0) : 0;
+    this.fighterAnimations.set(fighter, { action: fighter.action, time, visualTime, pose, transitionFrom, drive, brace,
+      consume, usePose: consume ? pose : null, lost: fighter.consumeLost?.serial ?? null, x: fighter.x, y: fighter.y, facing });
+    if (!reducedMotion) this.trackFlings(fighter, previous, consume ? pose : null, scale, facing, time);
     const guarding = Boolean(fighter.guard);
     const dizzy = (fighter.stun || 0) > 0 && fighter.hitType === 'dizzy' && fighter.grabbedBy == null;
     const frozen = (fighter.frozen || 0) > 0;
@@ -917,7 +1256,8 @@ export class Renderer {
       const rotation = downAirborne ? Math.PI * 0.38 * fall + (reducedMotion ? 0 : Math.sin(visualTime * 9) * 0.18) : Math.PI / 2 * fall * prone;
       // Live knockdowns are opaque; only corpses are ghosted.
       this.drawCorpse({ x: fighter.x + contactShake, y: fighter.y, z: fighter.z, h, rotation, fall, alpha: 1,
-        element: fighter.element, type: fighter.type, bossPhase: fighter.bossPhase, flutter, drive });
+        element: fighter.element, archetype: arch, type: fighter.type, bossPhase: fighter.bossPhase, flutter, drive,
+        weapon: fighter.weapon, armorItem: fighter.armorItem });
       if (isPlayer) polygon(ctx, [[fighter.x - 5, fighter.y - 36], [fighter.x + 5, fighter.y - 36], [fighter.x, fighter.y - 30]], color, INK, 1);
       this.drawFighterHealth(fighter, downAirborne ? h : 28);
       return;
@@ -942,7 +1282,8 @@ export class Renderer {
       ctx.globalAlpha = 1;
     }
 
-    if (guarding) {
+    // A guard spark or parry flash replaces the bubble while it plays.
+    if (guarding && !(fighter.guardFx > 0)) {
       const parrying = (fighter.parryTimer || 0) > 0;
       ctx.save();
       ctx.globalAlpha = parrying ? 0.25 : 0.13;
@@ -975,6 +1316,7 @@ export class Renderer {
       }
       ctx.restore();
     }
+    this.drawBuffs(fighter, h, flutter, 0);
 
     ctx.translate(fighter.x + contactShake, fighter.y);
     ctx.scale(scale * facing, scale);
@@ -987,21 +1329,47 @@ export class Renderer {
     if ((fighter.invulnerable || 0) > 0) ctx.globalAlpha = reducedMotion ? 0.8 : 0.74 + Math.sin(visualTime * 18) * 0.1;
     this.drawGather(fighter, pose, reducedMotion);
     const { hip, shoulder, hand } = pose;
-    const holding = fighter.weapon ? target => {
-      const ax = Math.cos(pose.weaponAngle), ay = Math.sin(pose.weaponAngle);
-      this.drawHeldWeapon(fighter.weapon, [hand[0] - ax * 23, hand[1] - ay * 23], [hand[0] + ax * 29, hand[1] + ay * 29], target);
-    } : null;
+    // While a consumable is used the item rides under the front fist (its track) and a held
+    // weapon is stowed on the back, behind the body.
+    if (consume && fighter.weapon) {
+      const [start, end] = this.stowAxis(pose, fighter.weapon);
+      this.drawHeldWeapon(fighter.weapon, start, end, ctx, flutter);
+    }
+    const holding = consume ? target => drawConsumeHeld(target, consume.kind, consume.variant, pose, flutter)
+      : fighter.weapon ? target => {
+        const ax = Math.cos(pose.weaponAngle), ay = Math.sin(pose.weaponAngle);
+        this.drawHeldWeapon(fighter.weapon, [hand[0] - ax * 23, hand[1] - ay * 23], [hand[0] + ax * 29, hand[1] + ay * 29], target, flutter);
+      } : null;
+    const action = fighter.action;
     const metrics = this.drawBody(pose, {
       element: fighter.element, color, bodyColor, isBoss, empowered: fighter.bossPhase > 1,
       flutter, speed: travel, stroke, recoil, drive, dizzy, frozen, beforeFrontArm: holding,
-    }, ctx.globalAlpha, poseBox(pose));
+      // Archetype extras (src/enemy-art.js): the archer's bow draw through a shot's wind-up, the
+      // Ox's chain whirling overhead, the priest's crown of slips while he heals, the warden's
+      // brace glint, a freed villager without his cangue.
+      archetype: arch, draw: arch === 'hunter' && action?.kind === 'special' && action.t < action.windup ? smooth(action.t / action.windup) : 0,
+      spin: arch === 'brute' && action?.variant === 'whirl' && action.t < action.activeUntil, cast: !!fighter.channel, brace,
+      freed: !!fighter.freed,
+    }, ctx.globalAlpha, arch ? poseBox(pose, ARCHETYPES[arch].pad) : poseBox(pose));
+    // The monk's Iron Bell is sized around everything his body drew (read before the next body
+    // draw reuses the metrics). It fades in as it goes up and out over its last 0.3 s.
+    let bellH = 0, bellW = 0;
+    if (fighter.bellTimer > 0) {
+      const bell = ironBellSize(metrics, scale);
+      bellH = bell.h;
+      bellW = bell.w;
+    }
     // Metrics are in pose units and reused by the next fighter: convert to world space now.
     const bodyTop = fighter.y + metrics.top * scale;
     const bodyLeft = fighter.x + (facing > 0 ? metrics.left : -metrics.right) * scale;
     const bodyRight = fighter.x + (facing > 0 ? metrics.right : -metrics.left) * scale;
     const headX = fighter.x + contactShake + metrics.headX * scale * facing;
     const headR = metrics.headR * (fighter.element === 'earth' ? 1.9 : 1);
-    if (fighter.armor) {
+    // A worn jade bracer hugs the lead forearm, over the body like the armour plates.
+    if (fighter.armorItem) drawWornArmorArt(ctx, fighter.armorItem, pose.elbow, pose.hand, flutter, flash, fighter.element, isBoss ? 1.14 : 1);
+    // Armour plates (an elemental fighter's armoured strike); the Chain Ox's armoured lash keeps
+    // its approved look: no overlay, the ARMOR floater tells a blow it shrugged off.
+    if (fighter.armor && !arch) {
       const plate = metrics.torso + 3;
       line(ctx, [[shoulder[0] - plate, shoulder[1] + 1], [shoulder[0] - plate, shoulder[1] + 11]], '#d9b65e', 3);
       line(ctx, [[shoulder[0] + plate, shoulder[1] + 1], [shoulder[0] + plate, shoulder[1] + 11]], '#d9b65e', 3);
@@ -1014,10 +1382,32 @@ export class Renderer {
       polygon(ctx, [[hand[0] + 12, hand[1] - 6], [hand[0] + 15, hand[1] - 11], [hand[0] + 18, hand[1] - 6], [hand[0] + 15, hand[1] - 1]], '#d6aa4e');
       ctx.restore();
     }
-    this.drawAttackTrail(fighter, pose, style, stroke, reducedMotion);
+    if (arch) {
+      // The archetype's own swing trail in its accent ('whirl': the body draws the orbit; 'bash':
+      // the shield rush), at 35% once the strike has connected. The bell, the smoke throw and the
+      // hook throw (its chain is the shot) have none.
+      const variant = action?.variant;
+      if (style && variant !== 'bell' && variant !== 'smoke' && variant !== 'hook') {
+        ctx.save();
+        if (action?.connected) ctx.globalAlpha *= 0.35;
+        drawArchetypeTrail(ctx, arch, pose, stroke, reducedMotion, variant === 'whirl' ? 'whirl' : variant === 'rush' ? 'bash' : '');
+        ctx.restore();
+      }
+    } else this.drawAttackTrail(fighter, pose, style, stroke, reducedMotion);
     ctx.restore();
+    this.drawBuffs(fighter, h, flutter, 1);
+    let barTop = bodyTop;
+    if (arch) {
+      barTop = bodyTop - 7;
+      if (bellH > 0) {
+        const age = ARCHETYPE_RULES.bell.time - fighter.bellTimer;
+        drawIronBell(ctx, fighter.x + contactShake, fighter.y, { h: bellH, w: bellW }, Math.min(1, age / 0.15, fighter.bellTimer / 0.3), 0, visualTime, reducedMotion);
+        barTop = Math.min(barTop, fighter.y - bellH * IRON_BELL_CROWN - 3);
+      }
+    }
 
-    if (frozen) {
+    // While an ice column holds the fighter it is the ice; the block returns once it cracks.
+    if (frozen && !(fighter.iceFx > 0)) {
       ctx.save();
       ctx.globalAlpha = 0.3;
       // The block keeps its old shape and grows only where the drawn body (kasa brim, flame
@@ -1046,7 +1436,7 @@ export class Renderer {
         polygon(ctx, [[x, y - 3], [x + 3, y], [x, y + 3], [x - 3, y]], '#d6a047');
       }
       ctx.restore();
-      if (!isPlayer && player && !player.weapon && player.grabTarget == null && fighter.grounded &&
+      if (!isPlayer && player && !player.weapon && player.grabTarget == null && fighter.grounded && canBeGrabbed(fighter) &&
           Math.abs(fighter.depth - player.depth) < 28 && Math.abs(fighter.x - player.x) <= 84 &&
           (fighter.x - player.x) * player.facing > 0) {
         ctx.save();
@@ -1057,8 +1447,39 @@ export class Renderer {
         ctx.restore();
       }
     }
-    if (fighter.recoveryRoll) this.drawFighterHealth(fighter, h * 0.62);
-    else this.drawFighterHealth(fighter, h, bodyTop);
+    let barY = null;
+    if (fighter.recoveryRoll) barY = this.drawFighterHealth(fighter, h * 0.62);
+    else barY = this.drawFighterHealth(fighter, h, barTop);
+    // A bound villager the player's E would free carries the rescue tag (above his bar), and a
+    // gauge fills over it while E is held.
+    if (arch === 'captive' && !fighter.freed && this.rescueTarget === fighter) {
+      let tagY = Math.min(fighter.y - h - 22, bodyTop - 18);
+      if (barY != null) tagY = Math.min(tagY, barY - 16);
+      drawRescuePrompt(ctx, fighter.x, tagY, visualTime, 'E · FREE', reducedMotion);
+      const rescue = player?.rescue?.id === fighter.id ? player.rescue : null;
+      if (rescue) {
+        // The gauge rides on top of the tag (his HP bar sits under its pointer).
+        const k = clamp01(rescue.t / CAPTIVE.hold);
+        ctx.save();
+        ctx.fillStyle = INK;
+        ctx.fillRect(fighter.x - 18, tagY - 16, 36, 5);
+        ctx.fillStyle = '#56905d';
+        ctx.fillRect(fighter.x - 17, tagY - 15, 34 * k, 3);
+        ctx.restore();
+      }
+    }
+    // A sealed fighter carries the priest's slip by the head until the seal lifts (on the side
+    // away from a villager's rescue tag beside the player).
+    if (fighter.sealed > 0) {
+      const side = isPlayer && this.rescueTarget ? (this.rescueTarget.x > fighter.x ? -1 : 1) : facing;
+      SEAL_SLIP.x = fighter.x + side * 16 * scale;
+      SEAL_SLIP.y = bodyTop - 10;
+      SEAL_SLIP.vx = facing;
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, fighter.sealed * 3);
+      drawEnemyProjectile(ctx, SEAL_SLIP, visualTime, reducedMotion);
+      ctx.restore();
+    }
   }
 
   drawRecoveryTrail(fighter, reducedMotion) {
@@ -1076,7 +1497,7 @@ export class Renderer {
       const y = fighter.depth - depthDirection * offset * 0.45 + 2;
       ctx.beginPath();
       ctx.ellipse(x, y, 8 - i, 2 + i, 0, Math.PI, Math.PI * 2);
-      ctx.strokeStyle = i === 0 ? elementColor(fighter.element) : '#c2b48a';
+      ctx.strokeStyle = i === 0 ? fighterColor(fighter) : '#c2b48a';
       ctx.lineWidth = 2;
       ctx.stroke();
     }
@@ -1111,9 +1532,12 @@ export class Renderer {
   drawGather(fighter, pose, reducedMotion) {
     const bossCharge = fighter.bossAction?.stage === 'windup';
     const action = bossCharge ? fighter.bossAction : fighter.action;
+    // An archetype's wind-up pose is its tell (the bow drawn, the slips gathered, the chain
+    // swung back): no elemental gather over it.
+    if (fighter.archetype) return;
     if (!action || (!bossCharge && !['special', 'burst'].includes(action.kind)) || action.t >= action.windup) return;
     const ctx = this.ctx;
-    const color = elementColor(fighter.element);
+    const color = fighterColor(fighter);
     const charge = clamp01(action.t / action.windup);
     const radius = 9 + charge * (bossCharge || action.kind === 'burst' ? 16 : 8);
     const [x, y] = pose.hand;
@@ -1148,20 +1572,24 @@ export class Renderer {
     for (let i = 0; i < 3; i += 1) {
       const x = fighter.x - direction * 12 * scale;
       const y = fighter.y - (17 + i * 15) * scale;
-      line(ctx, [[x - direction * (length + i * 6), y + lift], [x - direction * 10, y]], i === 1 ? '#fffaf0' : elementColor(fighter.element), i === 1 ? 4 : 2);
+      line(ctx, [[x - direction * (length + i * 6), y + lift], [x - direction * 10, y]], i === 1 ? '#fffaf0' : fighterColor(fighter), i === 1 ? 4 : 2);
     }
     ctx.restore();
   }
 
   drawAttackTrail(fighter, pose, style, stroke, reducedMotion) {
-    if (!style || stroke < 0.035) return;
+    // A brush slash (engine action.slash, drawn as a vfx) replaces the trail, including every
+    // weapon swing.
+    if (!style || stroke < 0.035 || fighter.action?.slash || style.trail === 'weapon') return;
     const ctx = this.ctx;
-    const color = elementColor(fighter.element);
+    const color = fighterColor(fighter);
     const contact = pose[style.contact || 'hand'];
     const [x, y] = contact;
     const cast = style.trail === 'cast';
     ctx.save();
-    ctx.globalAlpha *= stroke * (reducedMotion ? 0.6 : fighter.action?.kind === 'grabPunch' ? 0.65 : 0.9);
+    // Contact rule: the trail drops to 35% once the strike has landed (hit or block), so it
+    // never stacks over the impact spark.
+    ctx.globalAlpha *= stroke * (reducedMotion ? 0.6 : fighter.action?.kind === 'grabPunch' ? 0.65 : 0.9) * (fighter.action?.connected ? 0.35 : 1);
     if (style.angle) {
       ctx.translate(x, y);
       ctx.rotate(style.angle);
@@ -1173,15 +1601,6 @@ export class Renderer {
       // Preserve the element and contact cue, without streaming ribbons or orbiting debris.
       if (cast) elementGlyph(ctx, fighter.element, x + 10, y, 11, color, 2);
       else line(ctx, [[x + 4, y - 8], [x + 8, y], [x + 4, y + 7]], color, 4);
-    } else if (style.trail === 'weapon') {
-      ctx.beginPath();
-      ctx.arc(16, -41, 49, -1.15, 0.55);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 6;
-      ctx.stroke();
-      ctx.strokeStyle = '#fff8e8';
-      ctx.lineWidth = 2;
-      ctx.stroke();
     } else if (fighter.element === 'air') {
       // Broad, open crescents follow the palm or rising foot.
       ctx.beginPath();
@@ -1312,49 +1731,79 @@ export class Renderer {
   }
 
   // top: optional world y of the drawn headgear; the bar stays at least 6px above it.
+  // An archetype's bar takes its own bar colour (the Chain Ox's is 48 px wide); a bandit hidden
+  // in his smoke shows none. Returns the bar's top, or null when none is drawn.
   drawFighterHealth(fighter, h, top = Infinity) {
     const ctx = this.ctx;
     const isBoss = fighter.type === 'boss';
+    const arch = fighter.archetype ? ARCHETYPES[fighter.archetype] : null;
+    if (arch && fighter.smokeTimer > 0) return null;
     if (fighter.team !== 'player' && fighter.maxHp > 0 && (fighter.hp < fighter.maxHp || isBoss)) {
-      const width = isBoss ? 72 : 36;
+      const width = isBoss ? 72 : fighter.archetype === 'brute' ? 48 : 36;
       const barY = Math.min(fighter.y - h - (isBoss ? 33 : 15), top - 6);
       ctx.fillStyle = INK;
       ctx.fillRect(fighter.x - width / 2, barY, width, 5);
-      ctx.fillStyle = elementColor(fighter.element);
+      ctx.fillStyle = arch ? arch.bar : elementColor(fighter.element);
       ctx.fillRect(fighter.x - width / 2 + 1, barY + 1, (width - 2) * Math.max(0, fighter.hp / fighter.maxHp), 3);
+      return barY;
     }
+    return null;
   }
 
   drawProjectile(projectile, time, reducedMotion = false) {
     const ctx = this.ctx;
+    // Archetype shots (arrows, talisman, chain hook, smoke pellet) are src/enemy-art.js drawings;
+    // their floor shadow went in the shadow pass.
+    if (ENEMY_PROJECTILES.has(projectile.kind)) {
+      ctx.globalAlpha = 1;
+      ENEMY_SHOT.kind = projectile.kind;
+      ENEMY_SHOT.x = projectile.x;
+      ENEMY_SHOT.y = projectile.y;
+      ENEMY_SHOT.vx = projectile.vx;
+      ENEMY_SHOT.vy = (projectile.vy || 0) + (projectile.vDepth || 0);
+      ENEMY_SHOT.ox = projectile.ox;
+      ENEMY_SHOT.oy = projectile.oy;
+      drawEnemyProjectile(ctx, ENEMY_SHOT, time, reducedMotion);
+      return;
+    }
     const r = projectile.r || 9;
     const color = elementColor(projectile.element);
-    const angle = Math.atan2(projectile.vy || 0, projectile.vx || 1);
+    // Screen-space velocity: depth travel moves the ball down the screen too.
+    const vx = projectile.vx || 1;
+    const vy = (projectile.vy || 0) + (projectile.vDepth || 0);
+    const angle = Math.atan2(vy, vx);
+    if (projectile.kind !== 'weapon') {
+      // The inked element trail (bends by projectile.turn for steering balls) replaces the
+      // body's own tail bits.
+      const trailR = Math.min(r, TRAIL_R[projectile.element] ?? TRAIL_R_DEFAULT);
+      const back = r - trailR;
+      TRAIL_P.vx = vx; TRAIL_P.vy = vy; TRAIL_P.element = projectile.element; TRAIL_P.r = trailR;
+      TRAIL_P.turn = projectile.turn || 0; TRAIL_P.reduced = reducedMotion;
+      ctx.globalAlpha = 1;
+      fxProjectileTrail(ctx, projectile.x - Math.cos(angle) * back, projectile.y - Math.sin(angle) * back,
+        reducedMotion ? 0 : (time * 2.5) % 1, TRAIL_P);
+    }
     ctx.save();
     ctx.translate(projectile.x, projectile.y);
-    ctx.rotate(angle);
     if (projectile.kind === 'weapon') {
-      ctx.rotate(reducedMotion ? 0 : time * (projectile.weapon === 'spear' ? 0 : 9));
-      this.drawHeldWeapon(projectile.weapon || 'staff', [-23, 0], [23, 0]);
+      // The art aims itself along the screen velocity and mirrors leftward flight (blades and
+      // tassels stay upright, a rolling mill stone turns the way it rolls); spin is the
+      // accumulated WEAPON_ART[kind].spin, stilled under reduced motion.
+      const art = WEAPON_ART[projectile.weapon] ? projectile.weapon : 'staff';
+      drawThrownWeaponArt(ctx, art, reducedMotion ? 0 : (projectile.spin0 || 0) + time * WEAPON_ART[art].spin,
+        reducedMotion ? 0 : time, vx, vy);
       ctx.restore();
       return;
     }
+    ctx.rotate(angle);
     ctx.globalAlpha = 0.16;
     circle(ctx, 0, 0, r * 2.2, color);
     ctx.globalAlpha = 1;
     if (projectile.element === 'earth') {
-      if (!reducedMotion) {
-        for (let i = 0; i < 3; i += 1) {
-          const x = -r * (1.8 + i * 0.7);
-          const y = (i % 2 ? -1 : 1) * r * 0.5;
-          polygon(ctx, [[x - 3, y], [x, y - 4], [x + 3, y], [x, y + 3]], '#b7aa78');
-        }
-        ctx.rotate(time * 5);
-      }
+      if (!reducedMotion) ctx.rotate(time * 5);
       polygon(ctx, [[-r, -r * 0.6], [-r * 0.2, -r], [r * 0.85, -r * 0.7], [r, r * 0.2], [r * 0.3, r], [-r * 0.8, r * 0.8]], '#aab27a', INK, 2);
       line(ctx, [[-r * 0.5, -r * 0.4], [r * 0.2, -r * 0.55], [r * 0.5, 0]], '#e5dfb7', 2);
     } else if (projectile.element === 'fire') {
-      polygon(ctx, [[r, 0], [-r * 0.6, -r], [-r * 2.6, -r * 0.5], [-r * 1.8, 0], [-r * 3, r * 0.5], [-r * 0.6, r]], color);
       circle(ctx, 0, 0, r * 0.83, '#edaa5a', '#b95138', 1.5);
       circle(ctx, r * 0.2, 0, r * 0.48, '#fff1b9');
     } else if (projectile.element === 'water') {
@@ -1365,15 +1814,6 @@ export class Renderer {
       ctx.bezierCurveTo(r, r * 1.6, -r, r, -r * 2.6, 0);
       ctx.fill();
       line(ctx, [[-r * 0.6, -r * 0.35], [r * 0.3, -r * 0.45]], '#e8f7f0', 2);
-      circle(ctx, -r * 3.3, 0, 2, color);
-      if (!reducedMotion) {
-        ctx.beginPath();
-        ctx.moveTo(-r * 4.2, r * 0.3);
-        ctx.bezierCurveTo(-r * 3, -r * 0.9, -r * 2.5, r * 0.8, -r * 1.4, 0);
-        ctx.strokeStyle = '#90cbdc';
-        ctx.lineWidth = 3;
-        ctx.stroke();
-      }
     } else {
       ctx.strokeStyle = color;
       ctx.lineWidth = 3;
@@ -1382,18 +1822,35 @@ export class Renderer {
         ctx.arc(-i * 6, 0, r * (0.8 + i * 0.23), -1.05, 1.05);
         ctx.stroke();
       }
-      line(ctx, [[-r * 2.6, -r * 0.35], [-r * 1.2, -r * 0.35]], '#faffef', 2);
-      line(ctx, [[-r * 3, r * 0.4], [-r * 1.6, r * 0.4]], color, 2);
     }
     ctx.restore();
   }
 
   drawParticle(particle, reducedMotion = false) {
-    if (['ring', 'shockwave', 'impact', 'slash'].includes(particle.kind)) {
+    if (EFFECT_PARTICLE_KINDS.has(particle.kind)) {
       this.drawEffect(particle, reducedMotion);
       return;
     }
     const ctx = this.ctx;
+    if (WEAPON_PARTICLE_KINDS.has(particle.kind)) {
+      // Broken weapons (src/weapon-art.js): the snap puff and the lantern burst play out from
+      // their life; debris pieces spin about their middles and fade over their last 40%.
+      // Reduced motion keeps the puff and the burst and drops the flying debris.
+      if (particle.kind === 'shard' && reducedMotion) return;
+      const p = clamp01(1 - particle.life / (particle.maxLife || 1));
+      ctx.save();
+      ctx.translate(particle.x, particle.y);
+      if (particle.scale && particle.scale !== 1) ctx.scale(particle.scale, particle.scale);
+      if (particle.kind === 'shard') {
+        if (particle.flip < 0) ctx.scale(-1, 1);
+        ctx.rotate(particle.rot || 0);
+        ctx.globalAlpha = clamp01(particle.life / ((particle.maxLife || 1) * 0.4));
+        drawWeaponShardArt(ctx, particle.weapon, particle.index);
+      } else if (particle.kind === 'lanternBurst') drawLanternBurst(ctx, p);
+      else drawWeaponBreakPuff(ctx, p);
+      ctx.restore();
+      return;
+    }
     const alpha = Math.min(1, Math.max(0, particle.life / (particle.maxLife || 0.6)));
     const size = particle.size || 3;
     ctx.save();
@@ -1403,66 +1860,47 @@ export class Renderer {
   }
 
   drawEffect(effect, reducedMotion = false) {
+    if (effect.kind === 'vfx') {
+      this.drawVfx(effect, undefined, reducedMotion);
+      return;
+    }
+    if (effect.kind === 'consume') {
+      this.drawConsumeEffect(effect, reducedMotion);
+      return;
+    }
+    if (ENEMY_GROUND_EFFECTS.has(effect.kind) || ENEMY_POST_EFFECTS.has(effect.kind)) {
+      this.ctx.globalAlpha = 1;
+      drawEnemyEffect(this.ctx, effect, this.time || 0, reducedMotion);
+      return;
+    }
     const ctx = this.ctx;
     const remaining = Math.min(1, Math.max(0, effect.life / (effect.maxLife || 0.6)));
     if (effect.kind === 'signature') {
       this.drawSignature(effect, remaining, reducedMotion);
       return;
     }
-    if (effect.kind === 'impact' || effect.kind === 'slash') {
-      const radius = (effect.r || effect.radius || 19) * (effect.heavy ? 1.3 : 1);
-      const size = radius * (reducedMotion ? 0.7 : 0.6 + (1 - remaining) * 0.8);
-      ctx.save();
-      ctx.translate(effect.x, effect.y);
-      ctx.scale(effect.direction < 0 ? -1 : 1, 1);
-      ctx.globalAlpha = remaining * (reducedMotion ? 0.7 : 0.95);
-      if (effect.kind === 'impact' && effect.element && effect.impactKind === 'hit' && !reducedMotion) {
-        this.drawElementImpact(effect.element, size, remaining, effect.heavy);
-      }
-      if (effect.kind === 'slash') {
-        ctx.beginPath();
-        ctx.arc(-size * 0.6, 0, size, -1, 1);
-        ctx.strokeStyle = effect.color || '#edba5a';
-        ctx.lineWidth = effect.heavy ? 6 : 3;
-        ctx.stroke();
-      } else {
-        const rays = [];
-        for (let i = 0; i < 16; i += 1) {
-          const angle = i * Math.PI / 8;
-          const distance = size * (i % 2 ? 0.23 : 0.75 + (i % 4 === 0 ? 0.35 : 0));
-          rays.push([Math.cos(angle) * distance * 1.2, Math.sin(angle) * distance]);
-        }
-        polygon(ctx, rays, effect.color || '#d99c4f');
-        if (!reducedMotion) {
-          circle(ctx, 0, 0, size * 0.28 * remaining, '#fffdf0');
-          for (let i = 0; i < 3; i += 1) {
-            const angle = (i - 1) * 0.65;
-            const start = size * 0.9;
-            const end = size * (1.35 + (1 - remaining) * 0.5);
-            line(ctx, [[Math.cos(angle) * start, Math.sin(angle) * start], [Math.cos(angle) * end, Math.sin(angle) * end]], effect.color || '#d99c4f', effect.heavy ? 3 : 2);
-          }
-        }
-      }
-      ctx.restore();
+    if (effect.kind === 'impact' || effect.kind === 'slash' || effect.kind === 'shockwave') {
+      this.drawLegacyEffect(effect, 1 - remaining, reducedMotion);
       return;
     }
+    // Generic expanding ring (kind 'ring' and any unknown kind).
     const radius = effect.r || effect.radius || 80;
     const expansion = radius * (0.25 + (1 - remaining) * 0.75);
     ctx.save();
     ctx.globalAlpha = remaining * 0.13;
     ctx.beginPath();
-    ctx.ellipse(effect.x, effect.y, expansion, effect.kind === 'shockwave' ? expansion * 0.42 : expansion, 0, 0, Math.PI * 2);
+    ctx.ellipse(effect.x, effect.y, expansion, expansion, 0, 0, Math.PI * 2);
     ctx.fillStyle = effect.color || COLORS.air;
     ctx.fill();
     ctx.globalAlpha = remaining * 0.85;
     ctx.strokeStyle = effect.color || COLORS.air;
     ctx.lineWidth = remaining * 5 + 1;
     ctx.beginPath();
-    ctx.ellipse(effect.x, effect.y, expansion, effect.kind === 'shockwave' ? expansion * 0.42 : expansion, 0, 0, Math.PI * 2);
+    ctx.ellipse(effect.x, effect.y, expansion, expansion, 0, 0, Math.PI * 2);
     ctx.stroke();
     ctx.globalAlpha = remaining * 0.5;
     ctx.beginPath();
-    ctx.ellipse(effect.x, effect.y, expansion * 0.8, expansion * (effect.kind === 'shockwave' ? 0.33 : 0.8), 0, 0, Math.PI * 2);
+    ctx.ellipse(effect.x, effect.y, expansion * 0.8, expansion * 0.8, 0, 0, Math.PI * 2);
     ctx.strokeStyle = '#fffbea';
     ctx.lineWidth = 2;
     ctx.stroke();
@@ -1587,50 +2025,24 @@ export class Renderer {
     ctx.restore();
   }
 
-  drawElementImpact(element, size, remaining, heavy) {
+  // Pre-vfx effect kinds keep working through the ink set: 'impact' (impactKind hit / block /
+  // parry, with the element layer under hit sparks), 'slash' and 'shockwave' (landing dust).
+  drawLegacyEffect(effect, t, reducedMotion) {
     const ctx = this.ctx;
-    const color = elementColor(element);
-    const age = 1 - remaining;
-    ctx.save();
-    ctx.globalAlpha *= 0.85;
-    if (element === 'air') {
-      for (let i = 0; i < 2; i += 1) {
-        ctx.beginPath();
-        ctx.ellipse(size * 0.15, 0, size * (0.8 + i * 0.25), size * (1 + i * 0.4), -0.3, -1.3, 1.3);
-        ctx.strokeStyle = i ? color : '#f8fff2';
-        ctx.lineWidth = i ? 2 : heavy ? 5 : 3;
-        ctx.stroke();
-      }
-    } else {
-      for (let i = 0; i < (heavy ? 5 : 4); i += 1) {
-        const angle = (i - (heavy ? 2 : 1.5)) * 0.72;
-        const distance = size * (0.85 + age * 0.7);
-        const x = Math.cos(angle) * distance;
-        const y = Math.sin(angle) * distance;
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(angle + (element === 'earth' ? age * 2 : 0));
-        if (element === 'water') {
-          const r = (heavy ? 6 : 4) * remaining + 2;
-          ctx.beginPath();
-          ctx.moveTo(-r * 2, 0);
-          ctx.bezierCurveTo(r, -r * 1.5, r * 2, r * 1.5, -r * 2, 0);
-          ctx.fillStyle = '#87c8df';
-          ctx.fill();
-          line(ctx, [[-r * 0.3, -r * 0.2], [r * 0.4, -r * 0.2]], '#f0fcf5', 2);
-        } else if (element === 'earth') {
-          const r = heavy ? 7 : 5;
-          polygon(ctx, [[-r, -r * 0.6], [r * 0.2, -r], [r, 0], [r * 0.4, r * 0.8], [-r * 0.8, r * 0.5]], '#b5a371', '#817e51', 1.2);
-          line(ctx, [[-r * 0.4, -r * 0.4], [r * 0.2, -r * 0.6]], '#e9d8a1', 2);
-        } else {
-          const r = heavy ? 9 : 6;
-          polygon(ctx, [[r * 1.6, 0], [-r * 0.9, -r * 0.6], [-r * 0.3, 0], [-r, r * 0.5]], '#e2743d');
-          line(ctx, [[-r * 0.2, 0], [r * 0.8, 0]], '#ffdfa0', 2);
-        }
-        ctx.restore();
-      }
+    const p = vfxParams({ dir: effect.direction < 0 ? -1 : 1, element: effect.element, heavy: !!effect.heavy,
+      seed: effect.seed || 0, variant: effect.heavy ? 'heavy' : 'light' }, NO_PARAMS, undefined, reducedMotion);
+    ctx.globalAlpha = 1;
+    if (effect.kind === 'shockwave') {
+      p.heavy = true;
+      fxDustLand(ctx, effect.x, effect.y, t, p);
+    } else if (effect.kind === 'slash') fxSlash(ctx, effect.x, effect.y, t, p);
+    else if (effect.impactKind === 'block') fxGuardSpark(ctx, effect.x, effect.y, t, p);
+    else if (effect.impactKind === 'parry') fxParryFlash(ctx, effect.x, effect.y, t, p);
+    else {
+      const layer = VFX[effect.element];
+      if (layer) layer.draw(ctx, effect.x, effect.y, t, p);
+      (effect.heavy ? fxHitHeavy : fxHitLight)(ctx, effect.x, effect.y, t, p);
     }
-    ctx.restore();
   }
 
   drawFloater(floater) {
@@ -1666,10 +2078,23 @@ export class Renderer {
     ctx.translate(corpse.x - fall * 13 * lie * scale, corpse.y - (8 + 7 * lie) * scale);
     ctx.rotate(rotation);
     ctx.scale(scale * fall, scale);
+    // A live knockdown (weapon, armorItem) keeps its held weapon under the front fist and its
+    // worn bracer on the forearm; a lit lantern stays visible while its fuse burns.
+    const flutter = corpse.flutter || 0, isBoss = corpse.type === 'boss';
+    if (corpse.archetype) {
+      // An archetype lies in its own KO silhouette (the body swaps in ARCHETYPE_KO for KO_POSE),
+      // with its gear on the floor unless it became a pickup (dropped).
+      this.drawBody(KO_POSE, { archetype: corpse.archetype, color: fighterColor(corpse), ko: true, recoil: 1, flutter, drive,
+        dropped: !!corpse.dropped }, alpha, ARCHETYPE_KO_BOX);
+      ctx.restore();
+      return;
+    }
+    const holding = corpse.weapon ? target => this.drawHeldWeapon(corpse.weapon, KO_WEAPON[0], KO_WEAPON[1], target, flutter) : null;
     this.drawBody(KO_POSE, {
-      element: corpse.element, color: elementColor(corpse.element), isBoss: corpse.type === 'boss', empowered: corpse.bossPhase > 1,
-      ko: true, recoil: 1, flutter: corpse.flutter || 0, drive,
+      element: corpse.element, color: elementColor(corpse.element), isBoss, empowered: corpse.bossPhase > 1,
+      ko: true, recoil: 1, flutter, drive, beforeFrontArm: holding,
     }, alpha, KO_BOX);
+    if (corpse.armorItem) drawWornArmorArt(ctx, corpse.armorItem, KO_POSE.elbow, KO_POSE.hand, flutter, false, corpse.element, isBoss ? 1.14 : 1);
     ctx.restore();
   }
 
@@ -1680,7 +2105,8 @@ export class Renderer {
   // around the body in the current local (pose) units. Returns drawFighterBody's metrics.
   drawBody(pose, options, alpha, box) {
     const ctx = this.ctx;
-    if (alpha >= 1 || typeof document === 'undefined') return drawFighterBody(ctx, pose, options);
+    const drawBodyArt = options.archetype ? drawArchetypeBody : drawFighterBody;
+    if (alpha >= 1 || typeof document === 'undefined') return drawBodyArt(ctx, pose, options);
     const m = ctx.getTransform();
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (let i = 0; i < 4; i += 1) {
@@ -1694,7 +2120,7 @@ export class Renderer {
     x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0));
     x1 = Math.min(this.canvas.width, Math.ceil(x1)); y1 = Math.min(this.canvas.height, Math.ceil(y1));
     const w = x1 - x0, hgt = y1 - y0;
-    if (w <= 0 || hgt <= 0) return drawFighterBody(ctx, pose, options); // off screen: metrics only
+    if (w <= 0 || hgt <= 0) return drawBodyArt(ctx, pose, options); // off screen: metrics only
     if (!this.layer) {
       this.layer = document.createElement('canvas');
       this.layerCtx = this.layer.getContext('2d');
@@ -1706,7 +2132,7 @@ export class Renderer {
     lc.globalAlpha = 1;
     lc.clearRect(0, 0, w, hgt);
     lc.setTransform(m.a, m.b, m.c, m.d, m.e - x0, m.f - y0);
-    const metrics = drawFighterBody(lc, pose, options);
+    const metrics = drawBodyArt(lc, pose, options);
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = alpha;

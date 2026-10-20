@@ -61,9 +61,9 @@ function playFinisherSequence(game, enemy) {
   return reactions;
 }
 
-test('all four classes, arenas, difficulties and modes are immediately available', () => {
+test('all four classes, eight arenas, difficulties and modes are immediately available', () => {
   assert.deepEqual(Object.keys(ELEMENTS).sort(), ['air', 'earth', 'fire', 'water']);
-  assert.deepEqual(Object.keys(ARENAS).sort(), ['air', 'earth', 'fire', 'water']);
+  assert.deepEqual(Object.keys(ARENAS).sort(), ['air', 'bamboo', 'earth', 'fire', 'keep', 'market', 'rampart', 'water']);
   for (const mode of ['survival', 'training', 'tournament', 'challenge', 'story']) {
     assert.ok(MODES[mode], `${mode} is selectable`);
   }
@@ -576,6 +576,8 @@ test('throwing an equipped weapon releases it and damages a target in its lane',
 });
 
 test('nearby health and energy pickups restore their resource and are consumed', () => {
+  // A consumable is now used over a short drink (0.5 s tonic, 0.6 s wine jar) rather than at
+  // once: the item leaves the floor on E and its effect lands during the use.
   const game = fixture();
   const player = game.state.player;
   player.hp = player.maxHp / 2;
@@ -583,12 +585,15 @@ test('nearby health and energy pickups restore their resource and are consumed',
   game.state.weapons = [{ x: 510, depth: 560, y: 560, z: 0, kind: 'heal', life: 30 }];
   const initialHp = player.hp;
   game.tick({ interact: true }, STEP);
-  assert.ok(player.hp > initialHp + 5);
   assert.equal(game.state.weapons.length, 0);
+  advance(game, 0.6);
+  assert.ok(player.hp >= Math.min(player.maxHp, initialHp + 40));
   game.state.weapons = [{ x: 510, depth: 560, y: 560, z: 0, kind: 'energy', life: 30 }];
+  player.energy = 20;
   game.tick({ interact: true }, STEP);
-  assert.ok(player.energy > 30);
   assert.equal(game.state.weapons.length, 0);
+  advance(game, 0.7);
+  assert.ok(player.energy >= 75);
 });
 
 test('an elemental shot spends energy, hits a distant target and has a cooldown', () => {
