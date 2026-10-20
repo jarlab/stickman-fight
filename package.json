@@ -7,6 +7,6 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test tests/*.test.js",
-    "check": "node --check src/engine.js && node --check src/enemy-ai.js && node --check src/bosses.js && node --check src/grapples.js && node --check src/renderer.js && node --check src/main.js && node --check src/input.js"
+    "check": "node --check src/engine.js && node --check src/stages.js && node --check src/physics.js && node --check src/enemy-ai.js && node --check src/bosses.js && node --check src/grapples.js && node --check src/renderer.js && node --check src/main.js && node --check src/input.js"
   }
 }

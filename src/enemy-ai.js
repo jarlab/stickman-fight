@@ -52,7 +52,8 @@ export class EnemyAI {
     for (const shot of s.projectiles) {
       if (!this.projectileSeen.has(shot)) this.projectileSeen.set(shot, s.time);
     }
-    const corner = p.x < 115 ? 1 : p.x > 1165 ? -1 : 0;
+    const bounds = s.bounds ?? { left: 30, right: 1250 };
+    const corner = p.x < bounds.left + 85 ? 1 : p.x > bounds.right - 85 ? -1 : 0;
     let rebalance = !!this.cornerSide && !corner;
     this.cornerSide = corner;
     for (const e of foes) {
@@ -99,10 +100,13 @@ export class EnemyAI {
       ai.permit = committed(e);
     }
     if (rebalance && !corner) {
+      // Keep an approaching pack together. A few flankers supply rear pressure
+      // without sending half the encounter on a long trip around the player.
+      const flankers = Math.min(2, Math.floor(foes.length / 3));
       for (const side of [-1, 1]) {
         const members = foes.filter(e => e.ai.side === side);
         members.filter(e => !committed(e)).sort((a, b) => distance(b, p) - distance(a, p))
-          .slice(0, Math.max(0, members.length - Math.ceil(foes.length / 2)))
+          .slice(0, Math.max(0, flankers - (foes.length - members.length)))
           .forEach(e => { e.ai.side = -side; e.ai.route = 0; });
       }
     }
@@ -117,10 +121,14 @@ export class EnemyAI {
       });
     for (const e of waiting.slice(0, Math.max(0, level.attackers - occupied))) e.ai.permit = true;
     for (const e of foes) e.ai.permitSince = e.ai.permit ? (e.ai.permitSince ?? s.time) : null;
-    // Stable sides, then the oldest waiting fighter gets the nearest position.
+    // Reserve rows are independent of the number already attacking. Disabled
+    // fighters do not occupy a standing reserve's close position.
     for (const side of [-1, 1]) {
+      let rank = 0;
       foes.filter(e => e.ai.side === side).sort((a, b) => Number(b.ai.permit) - Number(a.ai.permit) ||
-        a.ai.lastTurn - b.ai.lastTurn || a.id - b.id).forEach((e, rank) => { e.ai.rank = rank; });
+        a.ai.lastTurn - b.ai.lastTurn || a.id - b.id).forEach(e => {
+          e.ai.rank = e.ai.permit || disabled(e) ? 0 : rank++;
+        });
     }
   }
 
@@ -136,6 +144,7 @@ export class EnemyAI {
     const p = s.player, ai = e.ai;
     if (!ai || !ai.targetId) return {};
     const level = LEVELS[s.settings.difficulty], style = STYLES[e.element];
+    const bounds = s.bounds ?? { left: 30, right: 1250 };
     const dx = p.x - e.x, lane = p.depth - e.depth;
     const absX = Math.abs(dx), absLane = Math.abs(lane);
     const facing = dx >= 0 ? 1 : -1;
@@ -198,16 +207,18 @@ export class EnemyAI {
     const overextended = p.action?.kind === 'melee' && !p.action.connected &&
       p.action.t > Math.max(p.action.activeUntil, level.reaction);
     const preferredRange = e.element === 'air' && (ai.probeUntil > s.time || overextended) ? 72 : style.range;
+    const reserveRange = ai.rank < 2 ? 28 + ai.rank * 24 : 92 + (ai.rank - 2) * 32;
+    const reserveDepth = (ai.rank % 2 ? 1 : -1) * (ai.rank < 2 ? 16 + ai.rank * 8 : 50 + (ai.rank - 2) * 12);
     const radius = front && canApproachGrab ? 40 :
-      preferredRange + (boss ? 18 : 0) + (front ? 0 : 68 + ai.rank * 40);
+      preferredRange + (boss ? 18 : 0) + (front ? 0 : reserveRange);
     const leadX = canApproachGrab ? 0 : clamp(ai.motion.vx * level.lead, -65, 65);
     const leadDepth = canApproachGrab ? 0 : clamp(ai.motion.vDepth * level.lead, -24, 24);
-    let goalX = clamp(p.x + leadX + ai.side * radius, 50, 1230);
-    let goalDepth = clamp(p.depth + leadDepth + (front ? 0 : (ai.rank % 2 ? 1 : -1) * (35 + ai.rank * 12)), 405, 640);
+    let goalX = clamp(p.x + leadX + ai.side * radius, bounds.left + 20, bounds.right - 20);
+    let goalDepth = clamp(p.depth + leadDepth + (front ? 0 : reserveDepth), 405, 640);
     if (front && ai.rangedPressure && absX > 165 && !ai.route) {
       const flank = p.depth > 570 ? -1 : p.depth < 470 ? 1 : (e.id % 2 ? 1 : -1);
       goalDepth = clamp(p.depth + flank * 68, 405, 640);
-      goalX = clamp(p.x + leadX + ai.side * 110, 50, 1230);
+      goalX = clamp(p.x + leadX + ai.side * 110, bounds.left + 20, bounds.right - 20);
     }
     if (e.element === 'earth' && rotating && !canApproachGrab && absX < 140 && absLane < 30) goalX = e.x;
     // Crossing the target's front is done in a separate lane, not through its body.
@@ -221,7 +232,7 @@ export class EnemyAI {
       // Take the close engagement from this side instead of circling forever.
       ai.side = Math.sign(e.x - p.x) || -facing;
       ai.route = 0;
-      goalX = clamp(p.x + leadX + ai.side * radius, 50, 1230);
+      goalX = clamp(p.x + leadX + ai.side * radius, bounds.left + 20, bounds.right - 20);
       goalDepth = clamp(p.depth + leadDepth, 405, 640);
     }
     if (ai.route) {
@@ -232,7 +243,8 @@ export class EnemyAI {
     // Teammates queue with space and briefly move around a blocked approach.
     const moveSign = Math.sign(goalX - e.x);
     const blocker = game.state.enemies.find(ally => ally !== e && alive(ally) &&
-      (ally.x - e.x) * moveSign > 0 && Math.abs(ally.x - e.x) < 65 && Math.abs(ally.depth - e.depth) < 34);
+      (ally.x - e.x) * moveSign > 0 && Math.abs(ally.x - e.x) < 65 && Math.abs(ally.depth - e.depth) < 34 &&
+      Math.abs(ally.x - e.x) < Math.abs(goalX - e.x) + (ally.w + e.w) / 2);
     if (blocker && ai.detourUntil <= s.time &&
         (e.id > blocker.id || blocker.action || Math.abs(blocker.vx) < 20)) {
       const away = Math.sign(e.depth - blocker.depth) || (e.id > blocker.id ? 1 : -1);
@@ -265,7 +277,7 @@ export class EnemyAI {
     // A remembered jab rhythm warrants a deliberate defensive beat before the
     // next strike. This is fallible prediction: it also guards if the player
     // stops attacking, and it cannot interrupt our own committed attack.
-    if (ai.meleePressure && !canApproachGrab && e.grounded && absX < 130 && absLane < 32 &&
+    if (front && ai.meleePressure && !canApproachGrab && e.grounded && absX < 130 && absLane < 32 &&
         p.facing === -facing && e.facing === facing && ai.guardAfter <= s.time && e.energy >= 20) {
       ai.guardAfter = s.time + (e.element === 'earth' ? .8 : 1.05);
       ai.counterUntil = s.time + .95;

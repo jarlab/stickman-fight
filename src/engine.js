@@ -1,14 +1,14 @@
-import { ELEMENTS, MOVEMENT, COMBAT, ARENAS, MODES, DIFFICULTIES } from './data.js';
-import { GRAVITY, clamp, moveFighter } from './physics.js';
+import { ELEMENTS, MOVEMENT, COMBAT, ARENAS, MODES, DIFFICULTIES, WIDTH } from './data.js';
+import { GRAVITY, ARENA_BOUNDS, clamp, moveFighter } from './physics.js';
 import { EnemyAI } from './enemy-ai.js';
 import { Grapples } from './grapples.js';
 import { BossDirector } from './bosses.js';
+import { StageDirector } from './stages.js';
 
 const elements = Object.keys(ELEMENTS);
 const COMBAT_TICK = 1 / 30;
 const INPUT_WINDOW = 5 * COMBAT_TICK;
 const countdowns = ['invulnerable', 'stun', 'parryTimer', 'parryCooldown', 'dashTime', 'slow', 'burn', 'attackTimer', 'tell', 'aiTimer', 'jumpTimer', 'comboTimer', 'hitReact', 'frozen', 'counterReady'];
-const stories = ['The wind has gone silent.', 'The harbor has frozen over.', 'The stone guardians have awakened.', 'One final flame. Restore the balance.'];
 
 export class Game {
   constructor(config = {}) {
@@ -24,13 +24,15 @@ export class Game {
     this.enemyAI = new EnemyAI();
     this.grapples = new Grapples();
     this.bosses = new BossDirector();
+    this.stages = new StageDirector();
     this.state = {
       settings, status: 'ready', time: 0, wave: 0, kills: 0, score: 0,
       lives: settings.mode === 'challenge' ? 1 : 3,
       player: null, enemies: [], projectiles: [], particles: [], effects: [],
       floaters: [], corpses: [], weapons: [],
       bossHazards: [],
-      arena: settings.arena, shake: 0, slowMotion: 0,
+      bounds: { ...ARENA_BOUNDS }, cameraX: 0, stage: null,
+      arena: settings.mode === 'story' ? 'air' : settings.arena, shake: 0, slowMotion: 0,
       banner: 'Find your element', bannerTime: 0, objective: MODES[settings.mode].objective,
       waveDelay: -1, weaponTimer: 10, combo: 0, comboTimer: 0, lastImpact: null, impacts: [],
     };
@@ -85,15 +87,16 @@ export class Game {
   placePlayer() {
     const s = this.state;
     this.grapples.release(this, s.player);
-    Object.assign(s.player, { x: 590, y: 555, depth: 555, z: 0, vDepth: 0, vx: 0, vy: 0, grounded: true, jumps: 0, dashUsed: false, dashTime: 0, stun: 0, burn: 0, slow: 0, action: null, guard: false, parryTimer: 0, attackTimer: 0, tell: 0, knockdown: 0, comboIndex: 0, comboTimer: 0 });
+    Object.assign(s.player, { x: s.stage?.checkpointX ?? 590, y: 555, depth: 555, z: 0, vDepth: 0, vx: 0, vy: 0, grounded: true, jumps: 0, dashUsed: false, dashTime: 0, stun: 0, burn: 0, slow: 0, action: null, guard: false, parryTimer: 0, attackTimer: 0, tell: 0, knockdown: 0, comboIndex: 0, comboTimer: 0 });
     Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false, hitLag: 0, stagger: 0, thrown: null, recoveryRoll: null, downTime: 0, airChain: 0 });
+    if (s.stage) s.cameraX = clamp(s.player.x - 460, 0, s.stage.width - WIDTH);
     this.clearCombatInput(s.player);
   }
 
   spawnEnemy({ boss = false, dummy = false, element, x, y, depth } = {}) {
     const s = this.state;
     const side = this.random() > 0.5;
-    const e = this.makeFighter('enemy', element || elements[Math.floor(this.random() * 4)], x ?? (side ? 1170 : 110), depth ?? y ?? (425 + this.random() * 200), boss ? 'boss' : dummy ? 'dummy' : 'fighter');
+    const e = this.makeFighter('enemy', element || elements[Math.floor(this.random() * 4)], x ?? (side ? s.bounds.right - 80 : s.bounds.left + 80), depth ?? y ?? (425 + this.random() * 200), boss ? 'boss' : dummy ? 'dummy' : 'fighter');
     e.invulnerable = 0.4;
     s.enemies.push(e);
     this.effect(e.x, e.y - e.h / 2, ELEMENTS[e.element].color, 16);
@@ -107,14 +110,8 @@ export class Game {
     const mode = s.settings.mode;
     const countOverride = s.settings.enemyCount === 'auto' ? null : s.settings.enemyCount;
     if (mode === 'story') {
-      s.arena = elements[s.wave - 1];
-      s.projectiles = [];
-      s.bossHazards = [];
-      s.weapons = [];
-      s.corpses = [];
-      this.placePlayer();
-      s.player.invulnerable = 1.5;
-      s.objective = stories[s.wave - 1];
+      this.stages.begin(this);
+      return;
     }
     if (mode === 'training') {
       for (let i = 0; i < (countOverride ?? 1); i++) this.spawnTrainingEnemy(i);
@@ -123,10 +120,6 @@ export class Game {
       this.spawnEnemy({ boss: true, element: elements[(s.wave + elements.indexOf(s.settings.element)) % 4] });
       for (let i = 1; i < (countOverride ?? 1); i++) this.spawnEnemy();
       this.banner(`Guardian ${s.wave} / 3`);
-    } else if (mode === 'story') {
-      this.spawnEnemy({ boss: true, element: s.arena });
-      for (let i = 1; i < (countOverride ?? 3); i++) this.spawnEnemy({ element: s.arena });
-      this.banner(`Chapter ${s.wave} · ${ARENAS[s.arena].name}`);
     } else {
       const bossWave = mode === 'survival' && s.wave % 3 === 0;
       const count = countOverride ?? (mode === 'challenge' ? 4 : Math.min(4 + s.wave, 13));
@@ -160,7 +153,9 @@ export class Game {
     const depth = 440 + this.random() * 180;
     const kinds = weaponOnly ? ['staff', 'spear', 'crate'] : ['staff', 'spear', 'crate', 'heal', 'energy'];
     const kind = kinds[Math.floor(this.random() * kinds.length)];
-    s.weapons.push({ x: 220 + this.random() * 840, y: depth, depth, kind, life: 28 });
+    const left = s.stage ? Math.max(s.bounds.left + 190, s.cameraX + 150) : 220;
+    const right = s.stage ? Math.min(s.bounds.right - 190, s.cameraX + 1130) : 1060;
+    s.weapons.push({ x: left + this.random() * Math.max(0, right - left), y: depth, depth, kind, life: 28 });
   }
 
   tick(input = {}, dt = 1 / 120) {
@@ -195,7 +190,9 @@ export class Game {
     this.bosses.updateHazards(this, step);
     this.resolveDeaths();
     if (s.status !== 'playing') return;
-    if (s.settings.mode === 'training') {
+    if (s.stage) {
+      this.stages.tick(this, dt);
+    } else if (s.settings.mode === 'training') {
       s.player.hp = Math.min(s.player.maxHp, s.player.hp + dt * 18);
       s.player.energy = Math.min(100, s.player.energy + dt * 15);
       const count = s.settings.enemyCount === 'auto' ? 1 : s.settings.enemyCount;
@@ -207,10 +204,10 @@ export class Game {
       } else {
         s.waveDelay -= dt;
         if (s.waveDelay <= 0) {
-          const final = ({ tournament: 3, challenge: 3, story: 4 })[s.settings.mode];
+          const final = ({ tournament: 3, challenge: 3 })[s.settings.mode];
           if (final && s.wave >= final) {
             s.status = 'won';
-            s.objective = s.settings.mode === 'story' ? 'Balance restored across the four sanctuaries.' : 'Every opponent defeated. The arena is yours.';
+            s.objective = 'Every opponent defeated. The arena is yours.';
           } else this.beginWave();
         }
       }
@@ -327,7 +324,7 @@ export class Game {
       if (f.action && action.t >= action.duration) this.endAction(f);
     }
     if (f.hitLag > 0) {
-      f.x = clamp(f.x, 30 + f.w / 2, 1250 - f.w / 2);
+      f.x = clamp(f.x, this.state.bounds.left + f.w / 2, this.state.bounds.right - f.w / 2);
       return;
     }
     if (f.dashTime <= 0) {
@@ -336,7 +333,7 @@ export class Game {
     f.vy = Math.min(f.vy, 1200);
     const wasAirborne = !f.grounded;
     const landingVelocity = f.vy;
-    moveFighter(f, dt);
+    moveFighter(f, dt, this.state.bounds);
     if (wasAirborne && f.grounded) {
       f.airChain = 0;
       if (f.action?.variant === 'aerial') this.endAction(f);
@@ -395,7 +392,7 @@ export class Game {
     f.vx = roll.direction * speed * diagonal;
     f.vDepth = roll.depthDirection * speed * .62 * diagonal;
     f.vy = 0;
-    moveFighter(f, next - roll.t);
+    moveFighter(f, next - roll.t, this.state.bounds);
     roll.t = next;
     if (next >= roll.duration) {
       f.recoveryRoll = null;
@@ -925,7 +922,7 @@ export class Game {
         }
       }
     }
-    s.projectiles = s.projectiles.filter(p => p.life > 0 && p.x > -100 && p.x < 1380 && p.y < 900);
+    s.projectiles = s.projectiles.filter(p => p.life > 0 && p.x > s.bounds.left - 130 && p.x < s.bounds.right + 130 && p.y < 900);
   }
 
   resolveDeaths() {
@@ -994,7 +991,7 @@ export class Game {
     for (const c of s.corpses) {
       c.life -= dt;
       c.vy += 1100 * dt;
-      c.x = clamp(c.x + c.vx * dt, 40, 1240);
+      c.x = clamp(c.x + c.vx * dt, this.state.bounds.left + 10, this.state.bounds.right - 10);
       c.z -= c.vy * dt;
       if (c.z < 0) { c.z = 0; c.vy *= -0.3; c.vx *= 0.65; c.spin *= 0.7; }
       c.y = c.depth - c.z;

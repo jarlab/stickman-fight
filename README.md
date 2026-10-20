@@ -1,6 +1,6 @@
-# Fourfold — Elemental Arena
+# Fourfold — Elemental Beat-em-up
 
-A local, single-player browser brawler inspired by Little Fighter 2's crowd combat and elemental martial arts. Four original stick fighters, four Canvas arenas, zero runtime dependencies or external assets.
+A local, single-player browser beat-em-up inspired by Little Fighter 2's crowd combat and elemental martial arts. Four original stick fighters, four side-scrolling stages plus arena modes, zero runtime dependencies or external assets.
 
 ## Play locally
 
@@ -11,6 +11,8 @@ npm start
 ```
 
 Open **http://127.0.0.1:5173** in a desktop browser. No `npm install`, game editor, or build step is needed. Use `PORT=5174 npm start` to choose another port. Keep the server running while playing. Inputs use physical key positions.
+
+Choose **Journey** for the side-scrolling game. Clear each group, then follow **GO →** along the road. Every stage has two crowd encounters and an elemental guardian; walk through the exit to reach the next stage. Journey is the default for new players; existing browsers keep their saved mode selection.
 
 ## Controls
 
@@ -62,13 +64,13 @@ Contact briefly holds the two fighters while the surrounding crowd keeps moving.
 
 ## Modes
 
-All modes, classes, arenas and difficulties are available immediately. **Enemies per wave** offers Auto (the original mode progression) or **1–12** opponents. Custom counts include the guardian on boss waves. Training replenishes that many sparring partners. Counts persist between visits and have separate personal bests.
+All modes, classes, arenas and difficulties are available immediately. **Enemies per group** in Journey, or **Enemies per wave** in arena modes, offers Auto or **1–12** opponents. Custom counts include the guardian on boss encounters. Training replenishes that many sparring partners. Counts persist between visits and have separate personal bests.
 
 - **Survival:** endless waves; an elemental guardian every third wave.
 - **Training:** sparring opponents, regenerating health/energy, unlimited lives; one partner on Auto.
 - **Tournament:** three consecutive guardian fights; custom counts add supporting enemies.
 - **Challenge:** three waves with one life; twelve opponents on Auto, or three times your selected count.
-- **Story:** four short combat stages through the elemental sanctuaries, each with a guardian. This is a combat prototype, not a narrative campaign.
+- **Journey:** travel right through Air, Water, Earth and Fire stages. The camera locks during a fight and follows you between encounters. Auto spawns three opponents in the first group, four in an ambush, then a guardian with two supporters. Clearing a group opens the route and restores some health and energy. Death returns you to that encounter's checkpoint, preserving damage to surviving enemies. This is a short combat campaign.
 
 Normal runs have three lives and no time limit. Regular enemies have the same health as a playable fighter of their element: Air 100, Water 115, Earth 145, Fire 105, on every difficulty. Difficulty scales AI skill: awareness, prediction, defensive choices, combo use and crowd coordination. Movement speed, damage, health, attack animation windows and mechanical cooldowns remain identical for an equivalent fighter across all difficulties. Bosses retain larger encounter health pools with the same values on every difficulty. A cleared wave restores some health and energy.
 
@@ -82,6 +84,8 @@ See [the LF2 boss investigation](docs/lf2-boss-investigation.md) for the REA evi
 
 Enemies line up with your lane before striking, move around blocked approaches, and spread to both sides when there is room. Easy, Normal, Hard and Crazy allow one, two, three and four simultaneous attack commitments respectively, including aerial pursuits. Fire rushes in and keeps pressure on; Air stays outside the pocket, evades diagonally and probes for openings; Earth holds its ground and guards approaches; Water guards, redirects and returns with a counter. Normal/Hard/Crazy enemies predict visible movement and projectile paths, choose attacks by their usefulness in the current situation, punish missed attacks or exposed landings, complete earned air combos and roll out of knockdowns. Decisions have reaction delays, committed movement and normal resource costs. Easy retains slower decisions and ordinary get-up recovery. Enemies respect protected knockdowns and wait for you to become vulnerable.
 
+Crowds approach as a main group with up to two flankers. Nearby reserves form compact second rows, so existing multi-target punches, elemental finishers and body throws can catch several opponents. Reserves keep approaching when front fighters anticipate a jab, but still defend against an actual incoming strike. The closer formations do not increase attack speed, damage or simultaneous attack limits.
+
 Settings, best scores, furthest stages and completed runs save in this browser's local storage by mode/difficulty. Active fights restart after reload. Optional synthesized sound distinguishes landed hits, heavy impacts, blocks, parries and landings; all art is drawn in code. Distinct martial stances, casting windups, air crescents, water ribbons, stone fists and flame lashes make each element read differently. Confirmed hits add elemental splashes and stronger local impact cues. Signatures produce cyclones, curling tidal crests, stone columns and flame novas. Reduced motion removes the roll spin, gathering orbit and extra debris while keeping clear action silhouettes and simple signature outlines.
 
 ## Development
@@ -92,6 +96,7 @@ npm run check  # JavaScript syntax checks
 ```
 
 - `src/engine.js`: combat, waves, pickups, lives and modes.
+- `src/stages.js`: scrolling Journey routes, encounter gates, checkpoints and stage exits.
 - `src/enemy-ai.js`: enemy approach, crowd spacing, reactions and attack selection.
 - `src/grapples.js`: linked holds, held punches, escape, body throws, crowd contacts and landing injury.
 - `src/physics.js`: ground-plane movement, bounds and jump height.
