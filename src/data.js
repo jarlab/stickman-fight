@@ -96,7 +96,7 @@ export const MODES = {
   training: { name: 'Training', description: 'Practice movement, combos and parries. Unlimited lives.', objective: 'Practice on the sparring partner. Health regenerates.' },
   tournament: { name: 'Tournament', description: 'Three guardians. One champion.', objective: 'Defeat 3 elemental guardians.' },
   challenge: { name: 'Challenge', description: 'Clear 12 opponents with a single life.', objective: 'Defeat 12 opponents. One life, no time limit.' },
-  story: { name: 'Story', description: 'A short journey through the four sanctuaries.', objective: 'Restore balance to the four sanctuaries.' },
+  story: { name: 'Journey', description: 'A side-scrolling beat-em-up through four elemental roads. Clear the crowds, follow GO, and defeat each guardian.', objective: 'Clear the road through four elemental stages.' },
 };
 
 export const DIFFICULTIES = {

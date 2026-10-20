@@ -749,15 +749,18 @@ export class Renderer {
     const time = state.time || 0;
     ctx.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0);
     ctx.globalAlpha = 1;
-    ctx.drawImage(this.background(key), 0, 0, WIDTH, HEIGHT);
+    if (state.settings?.mode === 'story') this.drawStageBackground(state, key);
+    else ctx.drawImage(this.background(key), 0, 0, WIDTH, HEIGHT);
     // A pack stage's anchored moving parts (banners, lanterns, chains, sprays, drips, smoke) go
     // with the unshaken background, so a heavy hit never shakes them off their poles and strings.
-    if (ARENA_PACK_PALETTES[key]) drawArenaPackScenery(ctx, key, reducedMotion ? 0 : time);
+    if (!state.stage && ARENA_PACK_PALETTES[key]) drawArenaPackScenery(ctx, key, reducedMotion ? 0 : time);
     ctx.save();
     const shake = reducedMotion ? 0 : Math.min(12, state.shake || 0);
     if (shake > 0) ctx.translate(Math.sin(time * 173) * shake, Math.cos(time * 137) * shake * 0.65);
 
     this.drawAmbient(time, key, reducedMotion);
+    ctx.translate(-(state.cameraX || 0), 0);
+    if (state.stage) this.drawStageGates(state, key);
     this.time = time;
     // Bound (and freed) villagers draw with the fighters.
     const captives = state.captives || [];
@@ -798,7 +801,7 @@ export class Renderer {
     const labeledBosses = new Set();
     for (const hazard of state.bossHazards || []) {
       const label = hazard.delay > 0 && !labeledBosses.has(hazard.ownerId);
-      this.drawBossHazard(hazard, time, reducedMotion, label);
+      this.drawBossHazard(hazard, time, reducedMotion, label, state.cameraX || 0);
       if (label) labeledBosses.add(hazard.ownerId);
     }
     const objects = [];
@@ -847,6 +850,7 @@ export class Renderer {
     ctx.restore();
 
     this.drawEdgeDetails(state, key);
+    if (state.stage) this.drawStageDirection(state, reducedMotion);
     if (state.banner && state.bannerTime > 0) {
       this.drawBanner(state.banner, state.bannerTime);
       // A pack stage's name card hangs under the banner that opens it (state.stageCard: wave 1
@@ -891,6 +895,118 @@ export class Renderer {
     def.draw(this.ctx, x, y, t, vfxParams(effect.p || NO_PARAMS, def.p || NO_PARAMS, layer, reducedMotion));
   }
 
+  drawStageBackground(state, key) {
+    const ctx = this.ctx, palette = PALETTES[key];
+    const camera = state.cameraX || 0;
+    const sky = ctx.createLinearGradient(0, 0, 0, 365);
+    sky.addColorStop(0, palette.sky);
+    sky.addColorStop(1, palette.horizon);
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    circle(ctx, 1000 - camera * .05, 125, 58, key === 'fire' ? '#f9d8a5' : '#faf4df');
+    for (let i = -1; i < 9; i++) {
+      const x = i * 440 - camera * .15;
+      polygon(ctx, [[x - 210, 365], [x + 35, 180 + noise(i + 31) * 95], [x + 290, 365]], palette.far);
+      cloud(ctx, x + 160, 95 + noise(i + 7) * 80, .7 + noise(i + 4) * .5, '#fffaf075');
+    }
+    for (let i = -1; i < 8; i++) {
+      const x = i * 530 - camera * .35;
+      polygon(ctx, [[x - 210, 370], [x + 25, 265 + noise(i + 42) * 45], [x + 360, 370]], palette.mid);
+    }
+    if (key === 'water') {
+      ctx.fillStyle = '#a6c9d1';
+      ctx.fillRect(0, 325, WIDTH, 40);
+      for (let i = 0; i < 24; i++) {
+        const x = ((i * 133 - camera * .45) % (WIDTH + 150) + WIDTH + 150) % (WIDTH + 150) - 75;
+        line(ctx, [[x, 332 + noise(i) * 26], [x + 46, 332 + noise(i) * 26]], '#eff5ec80', 2);
+      }
+    }
+    for (let i = 0; i < 6; i++) {
+      const x = 160 + i * 780 - camera * .65;
+      if (x < -180 || x > WIDTH + 180) continue;
+      temple(ctx, x, 350, .8 + noise(i + 2) * .35, palette);
+    }
+    const floor = ctx.createLinearGradient(0, 365, 0, 710);
+    floor.addColorStop(0, '#f3efdc');
+    floor.addColorStop(1, palette.stone);
+    ctx.fillStyle = palette.side;
+    ctx.fillRect(0, 350, WIDTH, 20);
+    ctx.fillStyle = floor;
+    ctx.fillRect(0, 365, WIDTH, 355);
+    ctx.fillStyle = palette.side;
+    ctx.fillRect(0, 681, WIDTH, 39);
+    ctx.fillStyle = palette.stone;
+    ctx.fillRect(0, 681, WIDTH, 9);
+    line(ctx, [[0, 350], [WIDTH, 350]], palette.accent, 2);
+    line(ctx, [[0, 682], [WIDTH, 682]], palette.accent, 2);
+    ctx.save();
+    ctx.translate(-camera, 0);
+    ctx.globalAlpha = .2;
+    for (const y of [395, 448, 510, 580, 650]) {
+      line(ctx, [[camera, y], [camera + WIDTH, y]], palette.accent, 1);
+      for (let x = Math.floor(camera / 140) * 140 - 140; x < camera + WIDTH + 140; x += 140) {
+        const offset = y === 448 || y === 580 ? 70 : 0;
+        line(ctx, [[x + offset, y], [x + offset + 24, Math.min(681, y + 53)]], palette.accent, 1);
+      }
+    }
+    ctx.globalAlpha = 1;
+    // Wayside banners and floor emblems stay in world space as the route scrolls.
+    for (let i = 0; i < 7; i++) {
+      const x = 145 + i * 530;
+      if (x < camera - 100 || x > camera + WIDTH + 100) continue;
+      line(ctx, [[x, 350], [x, 253]], palette.accent, 5);
+      polygon(ctx, [[x + 3, 258], [x + 43, 258], [x + 43, 301], [x + 23, 291], [x + 3, 301]], palette.accent);
+      elementGlyph(ctx, key, x + 23, 276, 8, PAPER, 1.4);
+    }
+    for (let i = 0; i < 3; i++) {
+      const x = 650 + i * 1100;
+      ctx.save();
+      ctx.translate(x, 523);
+      ctx.scale(1, .44);
+      ctx.globalAlpha = .16;
+      circle(ctx, 0, 0, 85, null, palette.accent, 2);
+      elementGlyph(ctx, key, 0, 0, 35, palette.accent, 1.5);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  drawStageGates(state, key) {
+    if (state.stage.phase !== 'fight') return;
+    const ctx = this.ctx, color = PALETTES[key].accent;
+    ctx.save();
+    for (const x of [state.bounds.left, state.bounds.right]) {
+      ctx.globalAlpha = .7;
+      line(ctx, [[x, 395], [x, 650]], color, 3);
+      for (let y = 400; y < 650; y += 30) {
+        polygon(ctx, [[x - 5, y], [x, y + 5], [x + 5, y], [x, y - 5]], color);
+      }
+      ctx.globalAlpha = .18;
+      ctx.fillStyle = color;
+      ctx.fillRect(x - 6, 395, 12, 255);
+    }
+    ctx.restore();
+  }
+
+  drawStageDirection(state, reducedMotion) {
+    const ctx = this.ctx, stage = state.stage;
+    ctx.save();
+    const x = WIDTH - 36, y = 152;
+    if (stage.phase !== 'fight' && state.status === 'playing') {
+      const nudge = reducedMotion ? 0 : Math.sin(state.time * 5) * 4;
+      ctx.translate(nudge, 0);
+      polygon(ctx, [[x - 110, y - 27], [x - 22, y - 27], [x + 4, y], [x - 22, y + 27], [x - 110, y + 27]], PAPER, INK, 1.5);
+      ctx.fillStyle = INK;
+      ctx.font = '900 25px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('GO', x - 58, y + 8);
+      ctx.font = '700 11px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(stage.phase === 'exit' ? stage.chapter === 4 ? 'EXIT →' : 'NEXT STAGE →' : 'MOVE RIGHT →', x, y + 46);
+    }
+    ctx.restore();
+  }
+
   drawAmbient(time, element, reducedMotion) {
     const ctx = this.ctx;
     const t = reducedMotion ? 0 : time;
@@ -917,7 +1033,7 @@ export class Renderer {
     ctx.restore();
   }
 
-  drawBossHazard(hazard, time, reducedMotion, showLabel) {
+  drawBossHazard(hazard, time, reducedMotion, showLabel, cameraX = 0) {
     const ctx = this.ctx;
     const warning = hazard.delay > 0;
     const color = elementColor(hazard.element);
@@ -973,7 +1089,7 @@ export class Renderer {
       const name = hazard.name.toUpperCase();
       const hint = hazard.hint;
       const width = Math.min(390, Math.max(ctx.measureText(name).width, ctx.measureText(hint).width) + 24);
-      const x = Math.max(width / 2 + 12, Math.min(WIDTH - width / 2 - 12, hazard.x));
+      const x = Math.max(cameraX + width / 2 + 12, Math.min(cameraX + WIDTH - width / 2 - 12, hazard.x));
       const y = Math.max(306, hazard.depth - hazard.rd - 34);
       ctx.fillStyle = '#fff8e8';
       ctx.fillRect(x - width / 2, y - 14, width, 35);
@@ -2142,6 +2258,7 @@ export class Renderer {
   }
 
   drawEdgeDetails(state, key) {
+    if (state.settings?.mode === 'story' && !state.stage) return;
     const ctx = this.ctx;
     const arena = typeof state.arena === 'object' ? state.arena : ARENAS[key];
     ctx.save();
@@ -2149,9 +2266,22 @@ export class Renderer {
     ctx.fillStyle = INK;
     ctx.font = '600 10px system-ui, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText((arena?.name || 'Elemental sanctuary').toUpperCase(), 23, HEIGHT - 20);
+    if (!state.stage) ctx.fillText((arena?.name || 'Elemental sanctuary').toUpperCase(), 23, HEIGHT - 20);
     ctx.textAlign = 'right';
-    ctx.fillText('FIND YOUR OPENING', WIDTH - 23, HEIGHT - 20);
+    const stage = state.stage;
+    if (!stage) ctx.fillText('FIND YOUR OPENING', WIDTH - 23, HEIGHT - 20);
+    if (stage) {
+      const start = WIDTH / 2 - 90, end = WIDTH / 2 + 90, y = HEIGHT - 23;
+      ctx.globalAlpha = .45;
+      line(ctx, [[start, y], [end, y]], INK, 2);
+      for (let i = 0; i < stage.encounters; i++) {
+        const complete = i < stage.encounter || i === stage.encounter && stage.phase !== 'fight';
+        circle(ctx, start + i * 90, y, 5, complete ? INK : PAPER, INK, 1.5);
+      }
+      ctx.globalAlpha = 1;
+      const progress = clamp01((state.player.x - 30) / Math.max(1, stage.width - 60));
+      polygon(ctx, [[start + progress * 180, y - 13], [start + progress * 180 - 4, y - 20], [start + progress * 180 + 4, y - 20]], INK);
+    }
     ctx.globalAlpha = 0.28;
     line(ctx, [[23, HEIGHT - 33], [67, HEIGHT - 33]], INK, 1);
     line(ctx, [[WIDTH - 67, HEIGHT - 33], [WIDTH - 23, HEIGHT - 33]], INK, 1);

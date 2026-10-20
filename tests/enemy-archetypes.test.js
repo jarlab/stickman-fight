@@ -102,12 +102,15 @@ test('challenge trials, story chapters, training and the tournament take their o
     assert.equal(challenge.state.enemies.length, 4);
     assert.equal(kinds(challenge.state).length, trial, `trial ${trial}`);
   }
-  for (const [enemyCount, expected] of [['auto', [0, 1, 1, 1]], [6, [0, 1, 2, 2]]]) {
+  for (const [enemyCount, expected] of [['auto', [0, 1, 2, 2]], [6, [0, 1, 2, 2]]]) {
     const story = new Game({ mode: 'story', seed: 4, ...(enemyCount === 'auto' ? {} : { enemyCount }) });
     story.start();
     for (let chapter = 1; chapter <= 4; chapter += 1) {
       if (chapter > 1) { story.state.enemies = []; story.beginWave(); }
       assert.equal(kinds(story.state).length, expected[chapter - 1], `story chapter ${chapter} (${enemyCount})`);
+      assert.equal(story.state.enemies.filter(e => e.type === 'boss').length, 0);
+      story.state.enemies = [];
+      story.stages.engage(story, 2);
       assert.equal(story.state.enemies.filter(e => e.type === 'boss').length, 1);
     }
   }

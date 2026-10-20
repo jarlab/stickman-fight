@@ -297,10 +297,14 @@ test('a use still playing as a Story chapter begins finishes at once, where the 
     const game = fixture({ mode: 'story' });
     const s = game.state;
     const p = s.player;
+    game.stages.engage(game, 2);
+    s.enemies = [];
+    game.stages.tick(game, STEP);
+    p.x = s.stage.nextX - 1;
     p.hp = 20;
     if (kind) take(game, kind);
     else game.tick({}, STEP);
-    s.waveDelay = STEP * 1.5;
+    p.x = s.stage.nextX;
     const wave = s.wave;
     for (let i = 0; i < 4 && s.wave === wave; i += 1) game.tick({}, STEP);
     assert.equal(s.wave, wave + 1, 'the next chapter began');

@@ -9,7 +9,7 @@ for (const mode of ['survival', 'training', 'tournament', 'story', 'challenge'])
       game.start();
       for (let wave = 1; wave <= (mode === 'training' ? 1 : 3); wave++) {
         assert.equal(game.state.enemies.length, enemyCount);
-        if (mode === 'tournament' || mode === 'story' || mode === 'survival' && wave === 3) {
+        if (mode === 'tournament' || mode === 'survival' && wave === 3) {
           assert.equal(game.state.enemies.filter(e => e.type === 'boss').length, 1);
         }
         if (wave < 3 && mode !== 'training') { game.state.enemies = []; game.beginWave(); }

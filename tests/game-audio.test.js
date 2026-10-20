@@ -52,6 +52,19 @@ test('impacts map onto the bank: parry, block, landing, kick, heavy and light hi
   assert.equal(panFor(undefined), 0);
 });
 
+test('world-space sounds pan according to their position on the scrolling screen', () => {
+  const { audio, game } = rig();
+  audio.unlock();
+  const { plays } = spy(audio);
+  game.state.status = 'playing';
+  game.state.cameraX = 2200;
+  game.sound('grab', 2200 + 640);
+  game.state.impacts.push({ id: 1, kind: 'hit', x: 2200 + 320, strength: 1 });
+  audio.update(game.state);
+  assert.equal(plays.find(p => p.name === 'grab').params.pan, 0);
+  assert.equal(plays.find(p => p.name === 'punchLight').params.pan, -.5);
+});
+
 test('sound off: no AudioContext is ever created and nothing is scheduled, whatever the game does', () => {
   const { audio, game, contexts } = rig({ enabled: false });
   assert.equal(audio.unlock(), false);

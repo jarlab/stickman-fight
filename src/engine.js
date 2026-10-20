@@ -1,9 +1,10 @@
-import { ELEMENTS, MOVEMENT, COMBAT, ARENAS, arenaElement, MODES, DIFFICULTIES, WEAPON_SPECS, ITEM_SPAWN, ITEM_SHARE, ITEM_EFFECTS,
+import { ELEMENTS, MOVEMENT, COMBAT, ARENAS, arenaElement, MODES, DIFFICULTIES, WIDTH, WEAPON_SPECS, ITEM_SPAWN, ITEM_SHARE, ITEM_EFFECTS,
   CRATE_BUNS, pickupIndex, PICKUP_REACH, headIconLift, ARCHETYPE_STATS, ARCHETYPE_COMBAT, ARCHETYPE_MOVES, ARCHETYPE_RULES, CAPTIVE, fighterSpec, fighterCombat } from './data.js';
-import { GRAVITY, clamp, moveFighter } from './physics.js';
+import { GRAVITY, ARENA_BOUNDS, clamp, moveFighter } from './physics.js';
 import { EnemyAI } from './enemy-ai.js';
 import { Grapples, rescueCandidate } from './grapples.js';
 import { BossDirector } from './bosses.js';
+import { StageDirector } from './stages.js';
 import { VFX } from './vfx-art.js';
 import { WEAPON_SHARDS } from './weapon-art.js';
 import { CONSUMABLES, CP_PLANT_X, CP_SPARKLE_TIME } from './pickup-art.js';
@@ -118,14 +119,10 @@ const SHARD_GRAVITY = 1200;
 // A break on (or just above) the floor starts its pieces at least this far above the floor
 // line, so they still fly up and out before they settle. Pieces bounce off the canvas edges.
 const SHARD_FLOOR_CLEAR = 12;
-const SHARD_X_MIN = 6;
-const SHARD_X_MAX = 1274;
 const STATIC_PARTICLES = new Set(['breakPuff', 'lanternBurst']);
 // Thrown weapons stop at the arena walls (the fighters' own bounds): one still flying there is
 // checked against the bodies at the wall, then breaks (or bursts, or splits) on it. A returning
 // chakram turns at the edge instead, and a bracer tossed off drops down the wall.
-const WALL_LEFT = 30;
-const WALL_RIGHT = 1250;
 // The second knife of a thrown pair lands its blow in the same tick; its punch sound plays this
 // much later so the mixer's per-sound rate limit lets both be heard.
 const VOLLEY_BEAT = .06;
@@ -158,7 +155,6 @@ const SPECIAL_SFX = { air: 'specialAir', water: 'specialWater', earth: 'specialE
 const BURST_SFX = { air: 'burstAir', water: 'burstWater', earth: 'burstEarth', fire: 'burstFire' };
 // An ordinary jump landing (not a knockdown) thuds softly once it falls faster than this.
 const SOFT_LANDING_SPEED = 240;
-const stories = ['The wind has gone silent.', 'The harbor has frozen over.', 'The stone guardians have awakened.', 'One final flame. Restore the balance.'];
 
 export class Game {
   constructor(config = {}) {
@@ -175,6 +171,7 @@ export class Game {
     this.enemyAI = new EnemyAI();
     this.grapples = new Grapples();
     this.bosses = new BossDirector();
+    this.stages = new StageDirector();
     this.state = {
       settings, status: 'ready', time: 0, wave: 0, kills: 0, score: 0,
       lives: settings.mode === 'challenge' ? 1 : 3,
@@ -184,7 +181,8 @@ export class Game {
       captives: [],
       // auras: planted censer fields ({ x, depth, team, facing, scale, life, maxLife, r, rate }).
       bossHazards: [], auras: [], itemSerial: 0,
-      arena: settings.arena, shake: 0, slowMotion: 0,
+      bounds: { ...ARENA_BOUNDS }, cameraX: 0, stage: null,
+      arena: settings.mode === 'story' ? 'air' : settings.arena, shake: 0, slowMotion: 0,
       // stageCard: the banner on screen opens the run's stage (wave 1) with no guardian on the
       // field, so the renderer hangs the arena's name card under it; any later banner clears it.
       // A guardian wave (every Tournament wave, every story chapter) skips the card: the DOM boss
@@ -264,9 +262,10 @@ export class Game {
     const s = this.state;
     this.grapples.release(this, s.player);
     const use = s.player.consume;
-    Object.assign(s.player, { x: 590, y: 555, depth: 555, z: 0, vDepth: 0, vx: 0, vy: 0, grounded: true, jumps: 0, dashUsed: false, dashTime: 0, stun: 0, burn: 0, slow: 0, action: null, guard: false, parryTimer: 0, attackTimer: 0, tell: 0, knockdown: 0, comboIndex: 0, comboTimer: 0 });
+    Object.assign(s.player, { x: s.stage?.checkpointX ?? 590, y: 555, depth: 555, z: 0, vDepth: 0, vx: 0, vy: 0, grounded: true, jumps: 0, dashUsed: false, dashTime: 0, stun: 0, burn: 0, slow: 0, action: null, guard: false, parryTimer: 0, attackTimer: 0, tell: 0, knockdown: 0, comboIndex: 0, comboTimer: 0 });
     Object.assign(s.player, { buffer: null, armor: false, frozen: 0, counterReady: 0, juggle: 0, hitReact: 0, running: false, guardHeld: false, hitLag: 0, stagger: 0, thrown: null, recoveryRoll: null, downTime: 0, airChain: 0 });
     Object.assign(s.player, { guardFx: 0, iceFx: 0, spawnReveal: 0, spawnHold: false, dustTimer: 0, scorch: false, consume: null, rescue: null, seekRescue: false, pull: null, sealed: 0 });
+    if (s.stage) s.cameraX = clamp(s.player.x - 460, 0, s.stage.width - WIDTH);
     this.clearCombatInput(s.player);
     // A use still playing as a Story chapter begins finishes at once, where the player now
     // stands: its effect lands if it had not (a censer is planted in the new sanctuary).
@@ -280,8 +279,8 @@ export class Game {
     // A wave arrival enters at an arena edge and queues behind swirls still playing there: a
     // step later and a little further in, so a wave reads as separate summonings, not one coil.
     const edge = x == null;
-    const queued = edge ? s.enemies.filter(o => o.spawnHold && o.spawnReveal > 0 && o.x > 640 === side).length : 0;
-    const spawnX = x ?? (side ? 1170 : 110) + (side ? -1 : 1) * (queued % 3) * SPAWN_STEP_X;
+    const queued = edge ? s.enemies.filter(o => o.spawnHold && o.spawnReveal > 0 && o.x > (s.bounds.left + s.bounds.right) / 2 === side).length : 0;
+    const spawnX = x ?? (side ? s.bounds.right - 80 : s.bounds.left + 80) + (side ? -1 : 1) * (queued % 3) * SPAWN_STEP_X;
     const arch = !boss && !dummy && Object.hasOwn(ARCHETYPE_STATS, archetype) && archetype !== 'captive' ? archetype : null;
     const e = this.makeFighter('enemy', arch ? null : element || elements[Math.floor(this.random() * 4)], spawnX, depth ?? y ?? (425 + this.random() * 200),
       boss ? 'boss' : dummy ? 'dummy' : arch ? 'archetype' : 'fighter', arch);
@@ -309,20 +308,8 @@ export class Game {
     const mode = s.settings.mode;
     const countOverride = s.settings.enemyCount === 'auto' ? null : s.settings.enemyCount;
     if (mode === 'story') {
-      s.arena = elements[s.wave - 1];
-      s.projectiles = [];
-      s.bossHazards = [];
-      s.captives = [];
-      // A guardian's relic travels to the next sanctuary; ordinary pickups stay behind.
-      s.weapons = s.weapons.filter(w => w.relic);
-      s.corpses = [];
-      // Ink effects, particles and censer fields belong to the last sanctuary, like its corpses.
-      s.effects = [];
-      s.particles = [];
-      s.auras = [];
-      this.placePlayer();
-      s.player.invulnerable = 1.5;
-      s.objective = stories[s.wave - 1];
+      this.stages.begin(this);
+      return;
     }
     if (mode === 'training') {
       for (let i = 0; i < (countOverride ?? 1); i++) this.spawnTrainingEnemy(i);
@@ -331,14 +318,6 @@ export class Game {
       this.spawnEnemy({ boss: true, element: elements[(s.wave + elements.indexOf(s.settings.element)) % 4] });
       for (let i = 1; i < (countOverride ?? 1); i++) this.spawnEnemy();
       this.banner(`Guardian ${s.wave} / 3`);
-    } else if (mode === 'story') {
-      const element = arenaElement(s.arena);
-      this.spawnEnemy({ boss: true, element });
-      const supporting = (countOverride ?? 3) - 1;
-      const mix = this.archetypeMix(supporting);
-      for (let i = 0; i < supporting - mix.length; i++) this.spawnEnemy({ element });
-      for (const archetype of mix) this.spawnEnemy({ archetype });
-      this.banner(`Chapter ${s.wave} · ${ARENAS[s.arena].name}`);
     } else {
       const bossWave = mode === 'survival' && s.wave % 3 === 0;
       const count = countOverride ?? (mode === 'challenge' ? 4 : Math.min(4 + s.wave, 13));
@@ -403,7 +382,7 @@ export class Game {
   // for help (the 'come' bubble) when a bandit closes in.
   spawnCaptive(x, depth) {
     const c = this.makeFighter('neutral', null, x, depth, 'archetype', 'captive');
-    c.facing = x < 640 ? 1 : -1;
+    c.facing = x < (this.state.bounds.left + this.state.bounds.right) / 2 ? 1 : -1;
     c.invulnerable = .4;
     c.callTimer = 1;
     (this.state.captives ??= []).push(c);
@@ -428,7 +407,9 @@ export class Game {
     // Weighted by WEAPON_SPECS[kind].spawn (and ITEM_SPAWN): still one draw per choice, so a drop
     // takes the same three numbers from the random stream as before.
     const kind = pick(weaponOnly ? WEAPON_POOL : ITEM_POOL, this.random());
-    const item = { x: 220 + this.random() * 840, y: depth, depth, kind, life: ITEM_LIFE };
+    const left = s.stage ? Math.max(s.bounds.left + 190, s.cameraX + 150) : 220;
+    const right = s.stage ? Math.min(s.bounds.right - 190, s.cameraX + 1130) : 1060;
+    const item = { x: left + this.random() * Math.max(0, right - left), y: depth, depth, kind, life: ITEM_LIFE };
     // A consumable's bob and glint phase (visual stream: it never shifts this.random()).
     if (CONSUMABLES[kind]) item.seed = Math.round(this.visualRandom() * 1000) / 100;
     s.weapons.push(item);
@@ -437,7 +418,7 @@ export class Game {
   // A spirit orb (variant = its element) floating over the floor, whatever the pickup cap.
   dropOrb(variant, x, depth) {
     const d = clamp(depth, 440, 640);
-    const orb = { x: clamp(x, 80, 1200), y: d, depth: d, kind: 'orb', variant: ELEMENTS[variant] ? variant : 'air', life: ORB_LIFE,
+    const orb = { x: clamp(x, this.state.bounds.left + 50, this.state.bounds.right - 50), y: d, depth: d, kind: 'orb', variant: ELEMENTS[variant] ? variant : 'air', life: ORB_LIFE,
       seed: Math.round(this.visualRandom() * 1000) / 100 };
     this.state.weapons.push(orb);
     return orb;
@@ -448,7 +429,7 @@ export class Game {
     const d = clamp(depth, 395, 650);
     for (let i = 0; i < CRATE_BUNS; i += 1) {
       const dx = (i - (CRATE_BUNS - 1) / 2) * 34;
-      this.state.weapons.push({ x: clamp(x + dx, 60, 1220), y: d, depth: d, kind: 'bun', life: 20, seed: i * 1.7 + 0.4 });
+      this.state.weapons.push({ x: clamp(x + dx, this.state.bounds.left + 30, this.state.bounds.right - 30), y: d, depth: d, kind: 'bun', life: 20, seed: i * 1.7 + 0.4 });
     }
   }
 
@@ -486,7 +467,9 @@ export class Game {
     this.bosses.updateHazards(this, step);
     this.resolveDeaths();
     if (s.status !== 'playing') return;
-    if (s.settings.mode === 'training') {
+    if (s.stage) {
+      this.stages.tick(this, dt);
+    } else if (s.settings.mode === 'training') {
       s.player.hp = Math.min(s.player.maxHp, s.player.hp + dt * 18);
       s.player.energy = Math.min(100, s.player.energy + dt * 15);
       const count = s.settings.enemyCount === 'auto' ? 1 : s.settings.enemyCount;
@@ -498,10 +481,10 @@ export class Game {
       } else {
         s.waveDelay -= dt;
         if (s.waveDelay <= 0) {
-          const final = ({ tournament: 3, challenge: 3, story: 4 })[s.settings.mode];
+          const final = ({ tournament: 3, challenge: 3 })[s.settings.mode];
           if (final && s.wave >= final) {
             s.status = 'won';
-            s.objective = s.settings.mode === 'story' ? 'Balance restored across the four sanctuaries.' : 'Every opponent defeated. The arena is yours.';
+            s.objective = 'Every opponent defeated. The arena is yours.';
           } else this.beginWave();
         }
       }
@@ -668,7 +651,7 @@ export class Game {
       if (f.action && action.t >= action.duration) this.endAction(f);
     }
     if (f.hitLag > 0) {
-      f.x = clamp(f.x, 30 + f.w / 2, 1250 - f.w / 2);
+      f.x = clamp(f.x, this.state.bounds.left + f.w / 2, this.state.bounds.right - f.w / 2);
       return;
     }
     if (f.dashTime <= 0) {
@@ -677,7 +660,7 @@ export class Game {
     f.vy = Math.min(f.vy, 1200);
     const wasAirborne = !f.grounded;
     const landingVelocity = f.vy;
-    moveFighter(f, dt);
+    moveFighter(f, dt, this.state.bounds);
     if (wasAirborne && f.grounded) {
       f.airChain = 0;
       if (f.action?.variant === 'aerial') this.endAction(f);
@@ -685,7 +668,7 @@ export class Game {
         this.impact(f, null, Math.max(.6, landingVelocity / 900), true, 'land');
         this.vfx('dustLand', f.x, f.depth, { heavy: true, scale: f.type === 'boss' ? 1.3 : 1 });
         // The burn waits where the slide will leave the body, so the victim lies in the flames.
-        if (f.scorch) this.scorchFloor(f, clamp(f.x + f.vx / KNOCKDOWN_FRICTION, 30 + f.w / 2, 1250 - f.w / 2));
+        if (f.scorch) this.scorchFloor(f, clamp(f.x + f.vx / KNOCKDOWN_FRICTION, this.state.bounds.left + f.w / 2, this.state.bounds.right - f.w / 2));
       } else {
         f.juggle = 0;
         if (landingVelocity > SOFT_LANDING_SPEED) this.sound('land', f.x, { strength: .4 });
@@ -768,7 +751,7 @@ export class Game {
     f.vx = roll.direction * speed * diagonal;
     f.vDepth = roll.depthDirection * speed * .62 * diagonal;
     f.vy = 0;
-    moveFighter(f, next - roll.t);
+    moveFighter(f, next - roll.t, this.state.bounds);
     roll.t = next;
     if (next >= roll.duration) {
       f.recoveryRoll = null;
@@ -1519,7 +1502,7 @@ export class Game {
   hookPull(shot, target, direction) {
     const src = shot.source;
     if (!src || src.dead) return;
-    const x = clamp(src.x + direction * R.hook.pullTo, 30 + target.w / 2, 1250 - target.w / 2);
+    const x = clamp(src.x + direction * R.hook.pullTo, this.state.bounds.left + target.w / 2, this.state.bounds.right - target.w / 2);
     const travel = Math.hypot(x - target.x, src.depth - target.depth);
     target.pull = { x, depth: src.depth };
     target.vx = 0;
@@ -1786,7 +1769,7 @@ export class Game {
     Object.assign(c, { freed: true, cheer: CAPTIVE.cheer, calling: 0, stun: 0, hitReact: 0 });
     this.enemyFx({ kind: 'freedBurst', x: c.x, y: c.depth, depth: c.depth, h: c.h, life: 1, maxLife: 1 });
     const d = clamp(c.depth, 440, 640);
-    s.weapons.push({ x: clamp(c.x + c.facing * 34, 60, 1220), y: d, depth: d, kind: 'heal', life: ITEM_LIFE,
+    s.weapons.push({ x: clamp(c.x + c.facing * 34, s.bounds.left + 30, s.bounds.right - 30), y: d, depth: d, kind: 'heal', life: ITEM_LIFE,
       seed: Math.round(this.visualRandom() * 1000) / 100 });
     s.score += CAPTIVE.reward;
     // Over his join bubble (commandIcon), not on it.
@@ -1811,8 +1794,8 @@ export class Game {
       if (c.freed) {
         c.cheer = Math.max(0, c.cheer - dt);
         if (!c.cheer) {
-          const left = c.x < 640;
-          if (left ? c.x <= 30 + c.w / 2 + 1 : c.x >= 1250 - c.w / 2 - 1) {
+          const left = c.x < (s.bounds.left + s.bounds.right) / 2;
+          if (left ? c.x <= s.bounds.left + c.w / 2 + 1 : c.x >= s.bounds.right - c.w / 2 - 1) {
             c.dead = true;
             this.vfx('spawn', c.x, c.depth, { reverse: true });
             continue;
@@ -2147,11 +2130,11 @@ export class Game {
       shot.depth += (shot.vDepth || 0) * dt;
       shot.z -= shot.vy * dt;
       shot.y = shot.depth - shot.z;
-      // A thrown weapon reaching an arena wall stops there (see WALL_LEFT): a bracer tossed off
+      // A thrown weapon reaching an arena wall stops there (see this.state.bounds.left): a bracer tossed off
       // drops down it; anything else still meets the bodies at the wall, then breaks on it.
-      const walled = shot.kind === 'weapon' && shot.returnAt == null && (shot.x < WALL_LEFT || shot.x > WALL_RIGHT);
+      const walled = shot.kind === 'weapon' && shot.returnAt == null && (shot.x < this.state.bounds.left || shot.x > this.state.bounds.right);
       if (walled) {
-        shot.x = clamp(shot.x, WALL_LEFT, WALL_RIGHT);
+        shot.x = clamp(shot.x, this.state.bounds.left, this.state.bounds.right);
         if (shot.toss) shot.vx = 0;
       }
       if (shot.z < 0) {
@@ -2201,7 +2184,7 @@ export class Game {
       }
       if (walled && shot.life > 0) { shot.life = 0; this.weaponBurst(shot, shot.vx); }
     }
-    s.projectiles = s.projectiles.filter(p => p.life > 0 && p.x > -100 && p.x < 1380 && p.y < 900);
+    s.projectiles = s.projectiles.filter(p => p.life > 0 && p.x > s.bounds.left - 130 && p.x < s.bounds.right + 130 && p.y < 900);
   }
 
   // A thrown weapon's body hit: a spear runs on through its first body and a chakram cuts
@@ -2243,7 +2226,7 @@ export class Game {
     if (shot.rollLeft > 0) {
       shot.vx *= Math.exp(-dt * ROLL_DECAY);
       shot.rollLeft -= dt;
-      if (shot.rollLeft <= 0 || shot.x < 40 || shot.x > 1240) { shot.life = 0; this.weaponBurst(shot, shot.vx, true); return false; }
+      if (shot.rollLeft <= 0 || shot.x < this.state.bounds.left + 10 || shot.x > this.state.bounds.right - 10) { shot.life = 0; this.weaponBurst(shot, shot.vx, true); return false; }
     }
     if (shot.returnAt != null) this.steerChakram(shot, dt);
     if (shot.life > 0) return true;
@@ -2259,7 +2242,7 @@ export class Game {
     shot.age = (shot.age || 0) + dt;
     const home = this.chakramHome(shot);
     if (!shot.back) {
-      if (shot.age < shot.returnAt && shot.x > 40 && shot.x < 1240) return;
+      if (shot.age < shot.returnAt && shot.x > this.state.bounds.left + 10 && shot.x < this.state.bounds.right - 10) return;
       shot.back = true;
       shot.hitIds = [];
       const toward = home ? Math.sign(home.x - shot.x) : 0;
@@ -2268,7 +2251,7 @@ export class Game {
     }
     // Past an edge and still heading out (nobody turned it home): it drops there. Thrown from
     // beside a wall, it turned at once and is still flying back in.
-    if ((shot.x < 40 && shot.vx < 0) || (shot.x > 1240 && shot.vx > 0)) { shot.life = 0; return; }
+    if ((shot.x < this.state.bounds.left + 10 && shot.vx < 0) || (shot.x > this.state.bounds.right - 10 && shot.vx > 0)) { shot.life = 0; return; }
     if (!home) return;
     shot.vDepth = clamp((home.depth - shot.depth) * 6, -320, 320);
     shot.z += (home.z + 35 - shot.z) * Math.min(1, dt * 6);
@@ -2290,7 +2273,7 @@ export class Game {
   // A thrown weapon that ends whole (a missed chakram, a tossed bracer) lands as a pickup.
   dropShot(shot) {
     shot.life = 0;
-    this.state.weapons.push({ x: clamp(shot.x, 60, 1220), y: shot.depth, depth: shot.depth, kind: shot.weapon, life: 20, uses: shot.uses });
+    this.state.weapons.push({ x: clamp(shot.x, this.state.bounds.left + 30, this.state.bounds.right - 30), y: shot.depth, depth: shot.depth, kind: shot.weapon, life: 20, uses: shot.uses });
   }
 
   // A mill stone that reaches the floor lands in dust and rolls on its rim down the lane.
@@ -2383,7 +2366,7 @@ export class Game {
       const len = Math.hypot(wx, wy);
       const ux = len ? wx / len : (index % 2 ? .7 : -.7) * dir, uy = len ? wy / len : 0;
       const speed = 50 + (index % 3) * 10;
-      s.particles.push({ kind: 'shard', weapon: kind, index, x: clamp(x + wx, SHARD_X_MIN, SHARD_X_MAX), y: y + wy, vx: ux * speed, vy: uy * speed * .6 - SHARD_KICK,
+      s.particles.push({ kind: 'shard', weapon: kind, index, x: clamp(x + wx, (this.state.bounds.left - 24), (this.state.bounds.right + 24)), y: y + wy, vx: ux * speed, vy: uy * speed * .6 - SHARD_KICK,
         rot: angle, rot0: angle, vr: (index % 2 ? 1 : -1) * (9 + index * 1.5), flip: dir, scale,
         floor: floor + (2 - index * 1.5) * scale, life, maxLife: life });
     }
@@ -2394,7 +2377,7 @@ export class Game {
   dropRelic(boss) {
     for (const kind of RELICS[boss.element] || []) {
       const depth = clamp(boss.depth, 395, 650);
-      this.state.weapons.push({ x: clamp(boss.x, 80, 1200), y: depth, depth, kind, life: RELIC_LIFE, relic: true });
+      this.state.weapons.push({ x: clamp(boss.x, this.state.bounds.left + 50, this.state.bounds.right - 50), y: depth, depth, kind, life: RELIC_LIFE, relic: true });
       this.floater(boss.x, boss.y - boss.h - 40, WEAPON_SPECS[kind].name.toUpperCase(), ELEMENTS[boss.element].color);
     }
   }
@@ -2436,11 +2419,11 @@ export class Game {
       if (e.archetype === 'monk' && this.random() < R.staffDrop) {
         corpse.dropped = true;
         const d = clamp(e.depth, 395, 650);
-        s.weapons.push({ x: clamp(e.x - corpse.fall * 26 * e.h / 66, 60, 1220), y: d, depth: d, kind: 'staff', life: 20 });
+        s.weapons.push({ x: clamp(e.x - corpse.fall * 26 * e.h / 66, s.bounds.left + 30, s.bounds.right - 30), y: d, depth: d, kind: 'staff', life: 20 });
       }
       if (e.stolen) {
         const d = clamp(e.depth, 395, 650);
-        s.weapons.push({ x: clamp(e.x, 60, 1220), y: d, depth: d, kind: e.stolen.kind, ...(e.stolen.variant ? { variant: e.stolen.variant } : null),
+        s.weapons.push({ x: clamp(e.x, s.bounds.left + 30, s.bounds.right - 30), y: d, depth: d, kind: e.stolen.kind, ...(e.stolen.variant ? { variant: e.stolen.variant } : null),
           life: 20, seed: Math.round(this.visualRandom() * 1000) / 100 });
         e.stolen = null;
       }
@@ -2549,7 +2532,7 @@ export class Game {
       if (p.kind === 'shard') {
         // Weapon debris falls hard, bounces once off its floor line, then lies still.
         p.vy += SHARD_GRAVITY * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
-        if ((p.x < SHARD_X_MIN && p.vx < 0) || (p.x > SHARD_X_MAX && p.vx > 0)) p.vx *= -.4;
+        if ((p.x < (this.state.bounds.left - 24) && p.vx < 0) || (p.x > (this.state.bounds.right + 24) && p.vx > 0)) p.vx *= -.4;
         // A piece only lands while falling: one still rising from below its floor line flies on.
         if (p.y > p.floor && p.vy > 0) {
           p.y = p.floor;
@@ -2577,7 +2560,7 @@ export class Game {
       // The body dissolves into a pale ink puff as it fades out.
       if (!c.smoked && c.life <= .45) { c.smoked = true; this.vfx('smoke', c.x, c.depth - 6, {}, { depth: c.depth }); }
       c.vy += 1100 * dt;
-      c.x = clamp(c.x + c.vx * dt, 40, 1240);
+      c.x = clamp(c.x + c.vx * dt, this.state.bounds.left + 10, this.state.bounds.right - 10);
       c.z -= c.vy * dt;
       if (c.z < 0) { c.z = 0; c.vy *= -0.3; c.vx *= 0.65; }
       c.y = c.depth - c.z;

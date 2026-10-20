@@ -87,12 +87,12 @@ test('story chapters stay in the four sanctuaries whatever arena was picked', ()
     for (const [i, element] of ['air', 'water', 'earth', 'fire'].entries()) {
       if (i) { s.enemies = []; game.beginWave(); }
       assert.equal(s.arena, element);
-      assert.equal(s.enemies.find(e => e.type === 'boss').element, element);
+      assert.equal(s.enemies.some(e => e.type === 'boss'), false, 'Journey opens with a crowd');
       // Intentional change (Enemies phase): from chapter 2 an archetype (no element) takes one
       // of the guardian's supporting slots; every elemental foe is still the sanctuary's element.
       assert.ok(s.enemies.every(e => e.archetype || e.element === element));
       assert.equal(s.enemies.some(e => e.archetype), i > 0);
-      assert.equal(s.banner, `Chapter ${i + 1} · ${ARENAS[element].name}`);
+      assert.equal(s.banner, `Stage ${i + 1} · ${ARENAS[element].name}`);
       // Intentional change (Arenas review): every chapter brings its guardian, whose DOM health
       // bar would hang over the card, so no chapter shows one (and none is on a pack stage).
       assert.equal(s.stageCard, false, 'a guardian chapter shows no stage card');

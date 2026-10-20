@@ -61,7 +61,10 @@ test('natural twelve-enemy Crazy waves reach four commitments without exceeding 
     game.state.player.invulnerable = 999;
     let peak = 0, bossTechnique = false;
     const attackers = new Set();
-    for (let frame = 0; frame < 120 * 25; frame++) {
+    // Staggered summon positions and compact reserve rows change when a natural
+    // four-way overlap occurs. Observe a full rotation, while enforcing the cap
+    // on every tick and requiring at least eight different attackers below.
+    for (let frame = 0; frame < 120 * 40; frame++) {
       game.tick({}, STEP);
       const active = committed(game);
       peak = Math.max(peak, active.length);

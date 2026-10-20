@@ -716,7 +716,7 @@ test('training lets the player recover from lethal damage without ending practic
   assert.equal(game.state.player.grounded, true);
 });
 
-for (const mode of ['tournament', 'challenge', 'story']) {
+for (const mode of ['tournament', 'challenge']) {
   test(`${mode} finishes after its finite sequence of encounters`, () => {
     const game = new Game({ element: 'earth', arena: 'earth', mode, difficulty: 'normal' });
     game.start();

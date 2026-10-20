@@ -117,15 +117,16 @@ export class BossDirector {
 
   pattern(game, e, target, action) {
     const { move, direction, windup } = action;
+    const { left, right } = game.state.bounds ?? { left: 30, right: 1250 };
     const make = (x, depth, rx, rd, extra = {}) => ({ id: this.nextId++, ownerId: e.id,
       element: e.element, move, name: action.name, hint: action.hint,
-      x: clamp(x, 45, 1235), depth: clamp(depth, 405, 640), rx, rd,
+      x: clamp(x, left + 15, right - 15), depth: clamp(depth, 405, 640), rx, rd,
       shape: 'ellipse', height: 40, delay: windup, warningTime: windup,
       life: .22, maxLife: .22, hitIds: [], released: false, direction,
       damage: 22, knockback: 380, ...extra });
     let hazards;
     if (move === 'flame-rush') {
-      action.destinationX = clamp(e.x + direction * clamp(Math.abs(target.x - e.x) + 65, 180, 430), 65, 1215);
+      action.destinationX = clamp(e.x + direction * clamp(Math.abs(target.x - e.x) + 65, 180, 430), left + 35, right - 35);
       const length = Math.abs(action.destinationX - e.x);
       hazards = [make((e.x + action.destinationX) / 2, e.depth, length / 2 + 30, 26,
         { shape: 'lane', height: 105, damage: 24, knockback: 520 })];
@@ -139,13 +140,13 @@ export class BossDirector {
         { shape: 'lane', height: 100, damage: move === 'wind-lane' ? 19 : 23,
           knockback: move === 'wind-lane' ? 620 : 330 })];
     } else if (move === 'gale-counter') {
-      action.destinationX = clamp(e.x - direction * 115, 65, 1215);
+      action.destinationX = clamp(e.x - direction * 115, left + 35, right - 35);
       action.travelDuringWindup = true;
       action.travelDuration = .14;
       hazards = [make(e.x, e.depth, 155, 70, { height: 42, damage: 20, knockback: 600 })];
     } else if (move === 'cyclone-ring') {
       if (Math.abs(target.x - e.x) < 180) {
-        action.destinationX = clamp(e.x - direction * 135, 65, 1215);
+        action.destinationX = clamp(e.x - direction * 135, left + 35, right - 35);
         action.travelDuringWindup = true;
         action.travelDuration = .16;
       }
@@ -153,7 +154,7 @@ export class BossDirector {
         target.depth + (index % 2 ? -55 : 35), 58, 38,
         { height: 125, delay: windup + index * .25, damage: 20, knockback: 500 }));
     } else if (move === 'tide-counter') {
-      action.destinationX = clamp(e.x - direction * 75, 65, 1215);
+      action.destinationX = clamp(e.x - direction * 75, left + 35, right - 35);
       action.travelDuringWindup = true;
       hazards = [make(e.x + direction * 65, e.depth, 165, 68,
         { height: 36, damage: 20, knockback: -230 })];

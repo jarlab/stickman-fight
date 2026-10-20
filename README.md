@@ -1,6 +1,6 @@
-# Fourfold — Elemental Arena
+# Fourfold — Elemental Beat-em-up
 
-A local, single-player browser brawler inspired by Little Fighter 2's crowd combat and elemental martial arts. Four original stick fighters, seven enemy archetypes, eight Canvas arenas, zero runtime dependencies or external assets: all art is drawn in code and all sound is synthesised in WebAudio.
+A local, single-player browser beat-em-up inspired by Little Fighter 2's crowd combat and elemental martial arts. Four original stick fighters, seven enemy archetypes, four side-scrolling stages plus eight arenas, zero runtime dependencies or external assets: all art is drawn in code and all sound is synthesised in WebAudio.
 
 ## Play locally
 
@@ -11,6 +11,8 @@ npm start
 ```
 
 Open **http://127.0.0.1:5173** in a desktop browser. No `npm install`, game editor, or build step is needed. Use `PORT=5174 npm start` to choose another port. Keep the server running while playing. Inputs use physical key positions.
+
+Choose **Journey** for the side-scrolling game. Clear each group, then follow **GO →** along the road. Every stage has two crowd encounters and an elemental guardian; walk through the exit to reach the next stage. Journey is the default for new players; existing browsers keep their saved mode selection.
 
 ## Controls
 
@@ -80,13 +82,13 @@ Archetypes use the same crowd turns as the elements: their attacks count against
 
 ## Modes
 
-All modes, classes, arenas and difficulties are available immediately. **Enemies per wave** offers Auto (the original mode progression) or **1–12** opponents. Custom counts include the guardian on boss waves. Training replenishes that many sparring partners. Counts persist between visits and have separate personal bests.
+All modes, classes, arenas and difficulties are available immediately. **Enemies per group** in Journey, or **Enemies per wave** in arena modes, offers Auto or **1–12** opponents. Custom counts include the guardian on boss encounters. Training replenishes that many sparring partners. Counts persist between visits and have separate personal bests.
 
 - **Survival:** endless waves; an elemental guardian every third wave. From wave 2 two archetypes take ordinary slots (three from wave 5); waves 2, 5, 8 … bring two bandits and a bound villager to free.
 - **Training:** sparring opponents, regenerating health/energy, unlimited lives; one partner on Auto.
 - **Tournament:** three consecutive guardian fights; custom counts add (elemental) supporting enemies.
 - **Challenge:** three waves with one life; twelve opponents on Auto, or three times your selected count. Each trial mixes in as many archetypes as its number (the second brings a bound villager).
-- **Story:** four short combat stages through the elemental sanctuaries, each with a guardian, whichever arena is selected. From chapter 2 an archetype joins the guardian's supporters (two with larger counts); chapter 3 brings a bound villager. This is a combat prototype, not a narrative campaign.
+- **Journey:** travel right through Air, Water, Earth and Fire stages. The camera locks during a fight and follows you between encounters. Auto spawns three opponents in the first group, four in an ambush, then a guardian with two supporters. Clearing a group opens the route and restores some health and energy. Death returns you to that encounter's checkpoint, preserving damage to surviving enemies. Later stages mix in enemy archetypes, with a bound villager to rescue in the third stage. This is a short combat campaign.
 
 An archetype takes a slot of the wave's total, so every count stays as selected, and at least one ordinary foe stays elemental (a single opponent always is). The kinds are drawn from the seeded random stream: at most one Chain Ox and one priest per wave.
 
@@ -104,11 +106,13 @@ See [the LF2 boss investigation](docs/lf2-boss-investigation.md) for the REA evi
 
 Enemies line up with your lane before striking, move around blocked approaches, and spread to both sides when there is room. Easy, Normal, Hard and Crazy allow one, two, three and four simultaneous attack commitments respectively, including aerial pursuits. Fire rushes in and keeps pressure on; Air stays outside the pocket, evades diagonally and probes for openings; Earth holds its ground and guards approaches; Water guards, redirects and returns with a counter. Normal/Hard/Crazy enemies predict visible movement and projectile paths, choose attacks by their usefulness in the current situation, punish missed attacks or exposed landings, complete earned air combos and roll out of knockdowns. Decisions have reaction delays, committed movement and normal resource costs. Easy retains slower decisions and ordinary get-up recovery. Enemies respect protected knockdowns and wait for you to become vulnerable.
 
+Crowds approach as a main group with up to two flankers. Nearby reserves form compact second rows, so existing multi-target punches, elemental finishers and body throws can catch several opponents. Reserves keep approaching when front fighters anticipate a jab, but still defend against an actual incoming strike. The closer formations do not increase attack speed, damage or simultaneous attack limits.
+
 Settings (including Sound and Music), best scores, furthest stages and completed runs save in this browser's local storage by mode/difficulty. Active fights restart after reload. All art is drawn in code. Distinct martial stances, casting windups, air crescents, water ribbons, stone fists and flame lashes make each element read differently. Signatures produce cyclones, curling tidal crests, stone columns and flame novas.
 
 ## Arenas
 
-Pick any of eight arenas in the setup menu; the choice is saved with your other settings. Every arena has the same floor: back ledge, depth limits, walls and floor rows are identical, so an arena never changes how a fight plays. Each arena has its own element, used for the third-wave spirit orb. Story chapters always visit the four sanctuaries, whichever arena is selected.
+Pick any of eight arenas in the setup menu; the choice is saved with your other settings. Every arena has the same floor: back ledge, depth limits, walls and floor rows are identical, so an arena never changes how a fight plays. Each arena has its own element, used for the third-wave spirit orb. Journey stages always visit the four sanctuaries, whichever arena is selected.
 
 - **Elemental sanctuaries:** Sky monastery (air), Moonlit harbor (water), Jade courtyard (earth) and Ember caldera (fire).
 - **Bamboo grove** (air) · *Where the wind bends*. A misty grove on both sides of an open clearing, a whitewashed wall with a moon gate, a lashed bamboo railing and cut-bamboo edge posts. Leaf sprays sway on the frame stalks, while 12 leaves fall and 5 wind streaks cross the air.
@@ -136,11 +140,11 @@ Pickups appear at the start of every wave and every 12 seconds (at most three on
 | Frost jian | 18 | 126 | +10 damage; every blow chills (slow 0.4 s), every third that lands freezes for 0.6 s | 36 damage in a straight line, freezes; shatters into ice that melts away |
 | Jade bracer | 6 | — | worn on the lead forearm with your fists free (a weapon can still be held): frontal hits take half damage and a blocked hit never chips; the sixth frontal hit breaks it (it cannot shield you from a lantern bursting in your own hand) | never thrown: E takes it off and it tumbles to the floor as a pickup |
 
-The **frost jian** is a relic: it never appears as an ordinary pickup and drops only where the Water guardian falls (in Story it travels on to the next sanctuary). Ordinary drops are weighted: staff, spear, knives and stone most often, then the crate and chakram, then the guandao, mill stone, lantern and bracer; about two in five of the 12-second drops are a consumable instead (the drop at the start of a wave is always a weapon or the bracer). A dropped weapon keeps its wear, and a dropped lantern keeps what is left of its fuse (unlit on the floor). Every pickup lies on the floor for 28 seconds (a dropped weapon or a crate's buns 20, a relic 30) and blinks out over its last five, faster as it runs out, then dissolves in a paper wash.
+The **frost jian** is a relic: it never appears as an ordinary pickup and drops only where the Water guardian falls (in Journey it travels on to the next sanctuary). Ordinary drops are weighted: staff, spear, knives and stone most often, then the crate and chakram, then the guandao, mill stone, lantern and bracer; about two in five of the 12-second drops are a consumable instead (the drop at the start of a wave is always a weapon or the bracer). A dropped weapon keeps its wear, and a dropped lantern keeps what is left of its fuse (unlit on the floor). Every pickup lies on the floor for 28 seconds (a dropped weapon or a crate's buns 20, a relic 30) and blinks out over its last five, faster as it runs out, then dissolves in a paper wash.
 
 ### Consumables
 
-Press **E** over a consumable to use it: you turn to it, lift it and use it, and its effect lands about two thirds of the way through (the censer as it touches the floor). While an item is in use you stop where you stand and cannot move, guard, jump or attack, and pressing **E** again does nothing. A held weapon is slung across your back (a crate, mill stone or lantern rides like a pack; the twin knives and a throwing stone are tucked into your sash) until you finish. A use still playing when a new Story chapter begins finishes at once. A blow before the effect lands knocks the item out of your hand and it is lost: a flask or jar shatters, food and the censer bounce away, an orb bursts. Drained tonics and wine jars are smashed at your feet and an empty gourd is tossed aside. With several items in reach, **E** takes the nearest one. Only the item **E** would take shows its prompt (a consumable's ink E seal, a weapon's E badge): none while you are in the air, stunned or using an item, or when **E** would grab a dizzy opponent instead. The HUD names the item in use and counts down the elixir and qi flow. The drawings live in `src/pickup-art.js`; use times, effect points and spawn weights in its `CONSUMABLES`, the effects in `ITEM_EFFECTS` (`src/data.js`).
+Press **E** over a consumable to use it: you turn to it, lift it and use it, and its effect lands about two thirds of the way through (the censer as it touches the floor). While an item is in use you stop where you stand and cannot move, guard, jump or attack, and pressing **E** again does nothing. A held weapon is slung across your back (a crate, mill stone or lantern rides like a pack; the twin knives and a throwing stone are tucked into your sash) until you finish. A use still playing when a new Journey stage begins finishes at once. A blow before the effect lands knocks the item out of your hand and it is lost: a flask or jar shatters, food and the censer bounce away, an orb bursts. Drained tonics and wine jars are smashed at your feet and an empty gourd is tossed aside. With several items in reach, **E** takes the nearest one. Only the item **E** would take shows its prompt (a consumable's ink E seal, a weapon's E badge): none while you are in the air, stunned or using an item, or when **E** would grab a dizzy opponent instead. The HUD names the item in use and counts down the elixir and qi flow. The drawings live in `src/pickup-art.js`; use times, effect points and spawn weights in its `CONSUMABLES`, the effects in `ITEM_EFFECTS` (`src/data.js`).
 
 | Item | Use | Effect | Found |
 | --- | --- | --- | --- |
@@ -193,6 +197,7 @@ npm test       # Node gameplay tests
 npm run check  # JavaScript syntax checks
 ```
 
+- `src/stages.js`: scrolling Journey routes, encounter gates, checkpoints and stage exits.
 - `src/engine.js`: combat, waves, pickups and consumable uses (`startConsume`, `updateConsume`, `applyConsumable`, censer fields in `state.auras`), lives and modes; the archetypes (`archetypeMix` per wave, `startArchetypeAction`, `archetypeMove`, the shots, `startChannel`, `raiseBell` / `ringBell`, `shieldBlocks`, `updateBrace`, `steal`, `hookPull`) and the bound villagers in `state.captives` (`spawnCaptive`, `startRescue`, `updateRescue`, `freeCaptive`, `updateCaptives`).
 - `src/enemy-ai.js`: enemy approach, crowd spacing, reactions and attack selection; the archetypes' styles (`ARCH_STYLES`: range, back-liners, shield / bell / armour defence), their errands (`archetypeErrand`: hold the heal or bell, smoke out, flee, `stealInput`, `harassInput`, `healInput`) and their attack choices (`archetypeAttack`).
 - `src/bosses.js`: the four guardians (`BOSSES`: names, phases and moves) and `BossDirector`: phase breaks (with the spirit orb they shed), technique wind-ups and recoveries, floor warnings and their released waves (`updateHazards`; `releaseEffect` voices each wave with the element's shot, signature or freeze sound and draws its ink effect).

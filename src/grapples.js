@@ -61,15 +61,16 @@ export class Grapples {
       Object.assign(f, { vx: 0, vy: 0, vDepth: 0, guard: false, guardHeld: false,
         parryTimer: 0, armor: false, running: false, hitLag: 0, hitReact: 0, pull: null });
     }
-    this.sync(holder, target);
+    this.sync(game, holder, target);
     game.sound('grab', target.x);
     game.floater(target.x, target.y - target.h - 14,
       holder.team === 'player' ? 'J PUNCH · U THROW' : 'GRABBED!', '#9a7935');
     return true;
   }
 
-  sync(holder, target) {
-    target.x = clamp(holder.x + holder.facing * (target.type === 'boss' ? 49 : 38), 30 + target.w / 2, 1250 - target.w / 2);
+  sync(game, holder, target) {
+    const { left, right } = game.state.bounds ?? { left: 30, right: 1250 };
+    target.x = clamp(holder.x + holder.facing * (target.type === 'boss' ? 49 : 38), left + target.w / 2, right - target.w / 2);
     target.depth = holder.depth;
     target.z = 0;
     target.y = target.depth;
@@ -129,7 +130,7 @@ export class Grapples {
         holder.cooldowns.attack = .48;
       }
     }
-    this.sync(holder, target);
+    this.sync(game, holder, target);
     if (holder.action?.kind === 'grabPunch') {
       const action = holder.action;
       action.t += dt;
@@ -173,7 +174,7 @@ export class Grapples {
       if (!alive(holder) || !alive(target) || target.grabbedBy !== holder.id ||
           holder.stun > 0 || holder.knockdown > 0 || holder.frozen > 0 || holder.grabTime <= 0) {
         this.release(game, holder);
-      } else this.sync(holder, target);
+      } else this.sync(game, holder, target);
     }
     for (const body of fighters(game)) {
       const flight = body.thrown;
@@ -196,7 +197,8 @@ export class Grapples {
         game.damage(target, 22, flight.direction, source, { knockdown: true, heavy: true,
           knockback: 420, lift: 200, element: source.element, thrownBody: true });
       }
-      const wall = body.x <= 30 + body.w / 2 || body.x >= 1250 - body.w / 2;
+      const { left, right } = game.state.bounds ?? { left: 30, right: 1250 };
+      const wall = body.x <= left + body.w / 2 || body.x >= right - body.w / 2;
       if (body.grounded || wall || flight.life <= 0) {
         game.damage(body, 18, flight.direction, source, { throwLanding: true,
           unblockable: true, knockdown: true, heavy: true, knockback: 0, lift: 0 });

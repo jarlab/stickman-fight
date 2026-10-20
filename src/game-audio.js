@@ -185,12 +185,12 @@ export class GameAudio {
       const cue = impactCue(impact);
       // delay: a blow landing in the same tick as another (the second of a thrown knife pair)
       // sounds a beat later, past the mixer's per-sound rate limit.
-      this.play(cue.name, cue.params, impact.x, impact.delay || 0);
+      this.play(cue.name, cue.params, impact.x - (state.cameraX || 0), impact.delay || 0);
     }
     for (const cue of state.sounds || []) {
       if (!(cue.id > this.soundCursor)) continue;
       this.soundCursor = cue.id;
-      if (audible) this.play(cue.name, cueParams(cue.name, cue.params), cue.x);
+      if (audible) this.play(cue.name, cueParams(cue.name, cue.params), cue.x - (state.cameraX || 0));
     }
     this.steerMusic(state);
   }

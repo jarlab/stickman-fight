@@ -10,7 +10,7 @@ const $ = (id) => document.getElementById(id);
 const STORAGE_KEY = 'fourfold:v1';
 const STEP = 1 / 120;
 const symbols = { air: '≋', water: '◡', earth: '◇', fire: '⋀' };
-const defaults = { element: 'air', arena: 'air', mode: 'survival', difficulty: 'normal', enemyCount: 'auto', sound: false, music: true, volume: 1, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches };
+const defaults = { element: 'air', arena: 'air', mode: 'story', difficulty: 'normal', enemyCount: 'auto', sound: false, music: true, volume: 1, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches };
 const fields = { element: ELEMENTS, arena: ARENAS, mode: MODES, difficulty: DIFFICULTIES };
 const storage = loadStorage();
 const preferences = storage.settings;
@@ -133,6 +133,16 @@ function updatePreferences() {
   $('player-symbol').textContent = symbols[preferences.element];
   $('player-name').textContent = element.title;
   $('intro-description').textContent = MODES[preferences.mode].description;
+  const journey = preferences.mode === 'story';
+  if (journey) $('arena-select').value = 'air';
+  $('intro-start-button').innerHTML = `${journey ? 'Begin the journey' : 'Enter the arena'} <kbd>Enter</kbd>`;
+  document.querySelector('.intro-tip').textContent = journey ? 'Clear each group. Follow GO to move right.' : 'Match their lane to land a hit.';
+  document.querySelector('[for="enemyCount-select"] .field-label > span').textContent = journey ? 'Enemies per group' : 'Enemies per wave';
+  $('enemy-count-help').textContent = journey
+    ? 'Journey crosses four stages. Clear two groups, then a guardian. Counts apply to each group and include bosses.'
+    : 'Auto follows each mode’s progression. Counts include bosses; personal bests are saved separately for each count.';
+  $('arena-select').disabled = game.state.status !== 'ready' || journey;
+  $('arena-select').title = journey ? 'Journey travels through all four elemental stages in order.' : '';
   const lives = preferences.mode === 'training' ? 'Unlimited lives' : preferences.mode === 'challenge' ? '1 life' : '3 lives';
   document.querySelector('.run-rules > span').textContent = lives;
   $('ability-description').replaceChildren();
@@ -219,6 +229,7 @@ function syncStatus() {
   $('start-button').disabled = !ready;
   $('start-button').innerHTML = ready ? 'Start run <span aria-hidden="true">↗</span>' : 'In arena <span aria-hidden="true">↗</span>';
   for (const control of document.querySelectorAll('.setup select, .element-choice')) control.disabled = !ready;
+  if (state.settings.mode === 'story') $('arena-select').disabled = true;
   $('resume-button').hidden = !paused;
   $('retry-button').hidden = !terminal;
   $('result-stats').hidden = !terminal;
@@ -226,7 +237,7 @@ function syncStatus() {
   if (modal) {
     $('modal-eyebrow').textContent = paused ? 'TAKE A BREATH' : status === 'won' ? 'BALANCE RESTORED' : 'BACK TO THE ELEMENTS';
     $('modal-title').textContent = paused ? 'Paused.' : status === 'won' ? 'Well fought.' : 'A good fight.';
-    $('modal-description').textContent = paused ? 'Catch your breath, then get back into the arena.' : status === 'won' ? `${MODES[state.settings.mode].name} complete. Try another element or turn up the difficulty.` : `Your run ends at ${state.settings.mode === 'tournament' ? 'guardian' : 'wave'} ${state.wave}. Every attempt is a fresh start.`;
+    $('modal-description').textContent = paused ? 'Catch your breath, then get back into the fight.' : status === 'won' ? `${MODES[state.settings.mode].name} complete. Try another element or turn up the difficulty.` : `Your run ends at ${state.settings.mode === 'story' ? 'stage' : state.settings.mode === 'tournament' ? 'guardian' : 'wave'} ${state.wave}. Every attempt is a fresh start.`;
     if (terminal) {
       recordRun(true);
       $('result-score').textContent = state.score.toLocaleString();
@@ -285,7 +296,7 @@ function updateHud() {
   const shotReadiness = abilityReadiness(p, 'special', element.specialCost);
   const burstReadiness = abilityReadiness(p, 'burst', element.burstCost);
   const hitStreak = s.combo >= 2 && s.comboTimer > 0 && s.status !== 'ready' ? s.combo : 0;
-  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, Math.ceil(p.weaponFuse ?? 0), p.armorItem, p.armorHits, p.grabTarget, p.grabbedBy, Boolean(p.recoveryRoll), p.knockdown > 0, p.grounded, p.action?.launched, p.airChain, s.arena, s.objective, shotReadiness, burstReadiness, hitStreak,
+  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, Math.ceil(p.weaponFuse ?? 0), p.armorItem, p.armorHits, p.grabTarget, p.grabbedBy, Boolean(p.recoveryRoll), p.knockdown > 0, p.grounded, p.action?.launched, p.airChain, s.arena, s.objective, s.stage?.encounter, s.stage?.phase, s.enemies.length, shotReadiness, burstReadiness, hitStreak,
     p.consume?.kind, Math.ceil(p.power || 0), Math.ceil(p.qiFlow || 0), p.censerRegen > 0, Math.ceil(p.sealed || 0), Boolean(p.rescue),
     (s.captives || []).some(c => !c.freed)].join('|');
   if (signature !== hudSignature) {
@@ -300,7 +311,8 @@ function updateHud() {
     const countLabel = Number.isInteger(s.settings.enemyCount) ? ` / ${s.settings.enemyCount} ${s.settings.enemyCount === 1 ? 'ENEMY' : 'ENEMIES'}` : '';
     $('mode-label').textContent = `${MODES[mode].name.toUpperCase()} / ${DIFFICULTIES[s.settings.difficulty].name.toUpperCase()}${countLabel}`;
     const challengeGoal = Number.isInteger(s.settings.enemyCount) ? s.settings.enemyCount * 3 : 12;
-    $('stage-label').textContent = s.status === 'ready' ? 'READY WHEN YOU ARE' : mode === 'training' ? 'PRACTICE YOUR FLOW' : mode === 'story' ? `STAGE ${s.wave} / 4` : mode === 'tournament' ? `GUARDIAN ${s.wave} / 3` : mode === 'challenge' ? `${s.kills} / ${challengeGoal} DEFEATED` : `WAVE ${String(s.wave).padStart(2, '0')}`;
+    const stageLabel = s.stage ? s.stage.encounter === s.stage.encounters - 1 ? 'GUARDIAN' : `GROUP ${s.stage.encounter + 1} / ${s.stage.encounters}` : '';
+    $('stage-label').textContent = s.status === 'ready' ? 'READY WHEN YOU ARE' : mode === 'training' ? 'PRACTICE YOUR FLOW' : mode === 'story' ? `STAGE ${s.wave} / 4 · ${stageLabel}` : mode === 'tournament' ? `GUARDIAN ${s.wave} / 3` : mode === 'challenge' ? `${s.kills} / ${challengeGoal} DEFEATED` : `WAVE ${String(s.wave).padStart(2, '0')}`;
     // A bound villager on the field takes over the objective line, shown under the stage while
     // he waits (the line is otherwise hidden), until he is freed or lost.
     const captive = (s.captives || []).some(c => !c.freed && !c.dead);
