@@ -16,7 +16,11 @@ export class StageDirector {
       chapter: s.wave, encounter: 0, encounters: 3, phase: 'fight',
       width: stageWidth, checkpointX: 280, gateX: 1250, nextX: 1560,
     };
-    for (const key of ['enemies', 'projectiles', 'bossHazards', 'weapons', 'corpses', 'particles', 'effects', 'floaters']) s[key] = [];
+    // Relics travel with the party; floor effects and rescue objectives belong
+    // to the previous sanctuary. Reposition drops into the new world's bounds.
+    s.weapons = s.weapons.filter(w => w.relic).map(w => ({ ...w, x: 370 }));
+    s.bounds = { left: 30, right: 1250 };
+    for (const key of ['enemies', 'projectiles', 'bossHazards', 'captives', 'auras', 'corpses', 'particles', 'effects', 'floaters']) s[key] = [];
     game.placePlayer();
     s.player.facing = 1;
     s.player.invulnerable = 1.5;
@@ -38,19 +42,26 @@ export class StageDirector {
     // Old drops behind a closed checkpoint must not consume the pickup limit.
     s.weapons = s.weapons.filter(w => w.x >= s.bounds.left && w.x <= s.bounds.right);
     s.corpses = s.corpses.filter(c => c.x >= s.bounds.left);
+    s.captives = s.captives.filter(c => c.x >= s.bounds.left && c.x <= s.bounds.right);
     const boss = encounter === 2;
     const count = s.settings.enemyCount === 'auto' ? (boss ? 3 : 3 + encounter) : s.settings.enemyCount;
+    const ordinary = count - Number(boss);
+    const mix = game.archetypeMix(ordinary);
     for (let i = 0; i < count; i++) {
       const ambush = encounter === 1 && i === count - 1 && count > 1;
+      const archetype = i >= count - mix.length ? mix[i - count + mix.length] : null;
       game.spawnEnemy({
-        boss: boss && i === 0, element: s.arena,
+        boss: boss && i === 0, element: s.arena, archetype,
         x: origin + (ambush ? 170 : 760 + i % 4 * 76),
         depth: 540 + (i % 3 - 1) * 24 + Math.floor(i / 4) * 20,
       });
     }
+    if (encounter === 0 && game.captiveWave() && mix.includes('bandit')) game.spawnCaptive(origin + 1040, 600);
+    if (encounter === 0 && s.wave % 3 === 0) game.dropOrb(s.arena, origin + 640, 560);
     s.objective = boss ? 'Defeat the guardian to open the stage exit.' : `Clear encounter ${encounter + 1} / 3 to open the road.`;
     if (encounter) game.banner(boss ? 'Guardian · the final stand' : 'Ambush · clear the road');
     game.spawnWeapon(true);
+    if (encounter) game.sound('waveGong', origin + 640);
     s.weaponTimer = 12;
   }
 

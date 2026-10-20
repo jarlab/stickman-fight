@@ -83,6 +83,8 @@ export class KeyboardInput {
       up: this.directionHeld('up'),
       down: this.directionHeld('down'),
       guard: this.held.has('KeyI'),
+      // E held down (freeing a bound villager takes a held E).
+      interactHeld: this.held.has('KeyE'),
       freshInput: this.freshInput,
       run: Boolean(this.runDirection && this.directionHeld(this.runDirection) && !this.directionHeld(this.runDirection === 'left' ? 'right' : 'left')),
     };

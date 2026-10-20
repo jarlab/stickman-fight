@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Game } from '../src/engine.js';
 import { BOSSES } from '../src/bosses.js';
+import { WEAPON_SPECS } from '../src/data.js';
 
 const OFFSET = 2200;
 
@@ -114,4 +115,47 @@ test('a later-stage boss warning damages the player at its world position after 
   assert.equal(player.hp, hp);
   game.bosses.updateHazards(game, .02);
   assert.ok(player.hp < hp, 'the translated quake contacts the translated player');
+});
+
+test('new thrown weapons, rolling stones, returning blades and break drops translate through later encounters', () => {
+  const round = n => Math.round(n * 1e6) / 1e6;
+  for (const [kind, spec] of Object.entries(WEAPON_SPECS)) {
+    if (spec.worn) continue;
+    for (const direction of [-1, 1]) {
+      const traces = [0, OFFSET].map(offset => {
+        const game = arena(offset), s = game.state;
+        s.particles = []; s.effects = [];
+        Object.assign(s.player, { x: offset + (direction > 0 ? 1050 : 230), facing: direction,
+          weapon: kind, weaponHits: spec.hits });
+        game.throwWeapon(s.player);
+        const trace = [];
+        for (let i = 0; i < 300; i++) {
+          game.updateProjectiles(1 / 120);
+          game.updateVisuals(1 / 120);
+          trace.push({
+            shots: s.projectiles.map(p => [round(p.x - offset), round(p.z), p.weapon]),
+            drops: s.weapons.map(w => [round(w.x - offset), w.kind]),
+            shards: s.particles.filter(p => p.kind === 'shard').map(p => round(p.x - offset)),
+            held: s.player.weapon,
+          });
+        }
+        return trace;
+      });
+      assert.deepEqual(traces[1], traces[0], `${kind}, direction ${direction}`);
+    }
+  }
+});
+
+test('orbs, rescued-villager rewards and chain pulls stay in the current encounter', () => {
+  const game = arena(), s = game.state;
+  const orb = game.dropOrb('water', OFFSET + 700, 560);
+  assert.equal(orb.x, OFFSET + 700);
+  game.spillBuns(OFFSET + 800, 560);
+  assert.ok(s.weapons.every(w => w.x > OFFSET));
+  const c = game.spawnCaptive(OFFSET + 700, 560);
+  game.freeCaptive(c);
+  assert.ok(s.weapons.filter(w => w.kind === 'heal').every(w => w.x > OFFSET));
+  const brute = game.spawnEnemy({ archetype: 'brute', x: OFFSET + 600, depth: 560 });
+  game.hookPull({ source: brute }, s.player, 1);
+  assert.equal(s.player.pull.x, OFFSET + 662);
 });
