@@ -29,7 +29,15 @@ const MOVES = {
   'triple-eruption': { name: 'Wildfire', hint: 'LEAVE THE THREE MARKS', windup: .9, recovery: 1.1, cost: 36 },
 };
 
+// The sound of a released wave (src/audio.js names): signature patterns use the element's burst,
+// the ice lance its freeze; other waves the element's special.
+const RELEASE_SFX = { 'cyclone-ring': 'burstAir', 'tidal-pools': 'burstWater', faultline: 'burstEarth',
+  'triple-eruption': 'burstFire', 'ice-lance': 'freeze' };
+const SPECIAL_SFX = { air: 'specialAir', water: 'specialWater', earth: 'specialEarth', fire: 'specialFire' };
+
 const living = f => f && !f.dead && f.hp > 0;
+// A phase break's spirit orb lands this far from the guardian, towards the player.
+const ORB_DROP_X = 120;
 const unavailable = e => !e.grounded || e.hitLag > 0 || e.stun > 0 || e.frozen > 0 ||
   e.knockdown > 0 || e.grabbedBy != null || e.grabTarget != null || e.thrown || e.recoveryRoll;
 
@@ -56,7 +64,11 @@ export class BossDirector {
     e.guard = e.armor = false;
     e.vx = e.vDepth = 0;
     game.banner(`${BOSSES[e.element].name} · ${BOSSES[e.element].phases[1]}`);
-    game.effect(e.x, e.depth - 45, ELEMENTS[e.element].color, 18);
+    game.vfx('spawn', e.x, e.depth, { element: e.element, scale: 1.3 });
+    game.sound('bossDrum', e.x);
+    // The phase break sheds a spirit orb of the guardian's element on the challenger's side.
+    const player = game.state.player;
+    game.dropOrb(e.element, e.x + (player && player.x < e.x ? -1 : 1) * ORB_DROP_X, e.depth);
     return true;
   }
 
@@ -97,6 +109,8 @@ export class BossDirector {
     e.tell = windup;
     e.attackKind = 'boss';
     e.armor = action.armor;
+    // Every tell opens on the tanggu drums, so a guardian's move can be heard coming.
+    game.sound('bossDrum', e.x);
     (s.bossHazards ??= []).push(...hazards);
     return true;
   }
@@ -205,7 +219,7 @@ export class BossDirector {
         activeDt = -hazard.delay;
         hazard.delay = 0;
         hazard.released = true;
-        game.effect(hazard.x, hazard.depth - Math.min(45, hazard.height / 2), ELEMENTS[hazard.element].color, 12);
+        this.releaseEffect(game, hazard);
       }
       hazard.life -= activeDt;
       if (hazard.life <= 0 || hazard.hitIds.includes(player.id) || player.z > hazard.height ||
@@ -220,6 +234,21 @@ export class BossDirector {
         { element: hazard.element, knockback: hazard.knockback, heavy: true, stun: .3, fall: 35 });
     }
     s.bossHazards = (s.bossHazards ?? []).filter(h => h.life > 0);
+  }
+
+  // Wildfire marks erupt and leave a burning patch; the ice lance raises staggered ice
+  // columns along its lane (near the guardian first). Other waves keep their elemental burst.
+  releaseEffect(game, hazard) {
+    const dir = hazard.direction < 0 ? -1 : 1;
+    game.sound(RELEASE_SFX[hazard.move] || SPECIAL_SFX[hazard.element], hazard.x);
+    if (hazard.move === 'triple-eruption') {
+      game.vfx('explosion', hazard.x, hazard.depth, { dir, scale: 1.15 });
+      game.vfx('groundBurn', hazard.x, hazard.depth, { radius: 38, life: 2.4 });
+    } else if (hazard.move === 'ice-lance') {
+      for (let i = 0; i < 3; i++) {
+        game.vfx('iceColumn', hazard.x + dir * (i - 1) * hazard.rx * .62, hazard.depth, {}, { delay: i * .06 });
+      }
+    } else game.effect(hazard.x, hazard.depth - Math.min(45, hazard.height / 2), ELEMENTS[hazard.element].color, 12);
   }
 
   cancel(game, e) {

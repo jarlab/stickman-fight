@@ -2,13 +2,15 @@ import { Game } from './engine.js';
 import { BOSSES } from './bosses.js';
 import { Renderer } from './renderer.js';
 import { KeyboardInput, PLAY_KEYS } from './input.js';
-import { ELEMENTS, COMBAT, ARENAS, MODES, DIFFICULTIES } from './data.js';
+import { GameAudio } from './game-audio.js';
+import { ELEMENTS, COMBAT, ARENAS, MODES, DIFFICULTIES, WEAPON_SPECS } from './data.js';
+import { CONSUMABLES } from './pickup-art.js';
 
 const $ = (id) => document.getElementById(id);
 const STORAGE_KEY = 'fourfold:v1';
 const STEP = 1 / 120;
 const symbols = { air: '≋', water: '◡', earth: '◇', fire: '⋀' };
-const defaults = { element: 'air', arena: 'air', mode: 'survival', difficulty: 'normal', enemyCount: 'auto', sound: false, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches };
+const defaults = { element: 'air', arena: 'air', mode: 'survival', difficulty: 'normal', enemyCount: 'auto', sound: false, music: true, volume: 1, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches };
 const fields = { element: ELEMENTS, arena: ARENAS, mode: MODES, difficulty: DIFFICULTIES };
 const storage = loadStorage();
 const preferences = storage.settings;
@@ -20,9 +22,9 @@ let lastStatus = 'ready';
 let lastTime = 0;
 let accumulator = 0;
 let runRecorded = false;
-let audioContext;
-let audioSnapshot;
 let hudSignature = '';
+// Sound stays off (and no AudioContext exists) until the player turns it on.
+const audio = new GameAudio({ enabled: preferences.sound, music: preferences.music, volume: preferences.volume });
 
 function loadStorage() {
   const result = { settings: { ...defaults }, records: {} };
@@ -32,9 +34,11 @@ function loadStorage() {
     for (const [key, options] of Object.entries(fields)) {
       if (Object.hasOwn(options, parsed.settings?.[key])) result.settings[key] = parsed.settings[key];
     }
-    for (const key of ['sound', 'reducedMotion']) {
+    for (const key of ['sound', 'music', 'reducedMotion']) {
       if (typeof parsed.settings?.[key] === 'boolean') result.settings[key] = parsed.settings[key];
     }
+    const volume = parsed.settings?.volume;
+    if (Number.isFinite(volume) && volume >= 0 && volume <= 1) result.settings.volume = volume;
     if (Number.isInteger(parsed.settings?.enemyCount) && parsed.settings.enemyCount >= 1 && parsed.settings.enemyCount <= 12) {
       result.settings.enemyCount = parsed.settings.enemyCount;
     }
@@ -109,10 +113,15 @@ function updatePreferences() {
   $('sound-button').setAttribute('aria-pressed', String(preferences.sound));
   $('sound-button').innerHTML = `Sound <span>${preferences.sound ? 'on' : 'off'}</span>`;
   $('sound-button').setAttribute('aria-label', `Sound ${preferences.sound ? 'on' : 'off'}. Toggle sound.`);
+  $('music-button').setAttribute('aria-pressed', String(preferences.music));
+  $('music-button').innerHTML = `Music <span>${preferences.music ? 'on' : 'off'}</span>`;
+  $('music-button').setAttribute('aria-label', `Music ${preferences.music ? 'on' : 'off'}${preferences.sound ? '' : ' when sound is on'}. Toggle music.`);
+  $('volume-slider').value = String(Math.round(preferences.volume * 100));
+  $('volume-slider').setAttribute('aria-valuetext', `${Math.round(preferences.volume * 100)}%${preferences.sound ? '' : ', sound is off'}`);
   $('motion-button').setAttribute('aria-pressed', String(preferences.reducedMotion));
   $('motion-button').innerHTML = `Motion <span>${preferences.reducedMotion ? 'reduced' : 'full'}</span>`;
   $('motion-button').setAttribute('aria-label', `Motion ${preferences.reducedMotion ? 'reduced' : 'full'}. Toggle reduced motion.`);
-  for (const name of ['sound', 'motion']) {
+  for (const name of ['sound', 'music', 'motion']) {
     const source = $(`${name}-button`);
     const target = $(`pause-${name}-button`);
     target.innerHTML = source.innerHTML;
@@ -148,7 +157,6 @@ function createPreview() {
   lastStatus = 'ready';
   runRecorded = false;
   hudSignature = '';
-  audioSnapshot = null;
   syncStatus();
   updatePreferences();
   updateHud();
@@ -157,7 +165,7 @@ function createPreview() {
 
 function startRun() {
   if (game.state.status !== 'ready') return;
-  unlockAudio();
+  audio.unlock();
   clearInput();
   game.start();
   syncStatus();
@@ -165,7 +173,8 @@ function startRun() {
   document.querySelector('.masthead').scrollIntoView({ block: 'start', behavior: 'instant' });
   const crowd = preferences.enemyCount === 'auto' ? '' : ` ${preferences.enemyCount} ${preferences.enemyCount === 1 ? 'enemy' : 'enemies'} per wave.`;
   announce(`${ELEMENTS[preferences.element].name}, ${MODES[preferences.mode].name}, ${DIFFICULTIES[preferences.difficulty].name}.${crowd} Fight!`);
-  tone(320, 600, .16, .025);
+  // Entering the arena is the player joining the fight.
+  audio.ui('menuJoin');
 }
 
 function retry() {
@@ -184,6 +193,7 @@ function pauseGame() {
 
 function resumeGame() {
   if (game.state.status !== 'paused') return;
+  audio.ui('menuCancel');
   clearInput();
   game.togglePause();
   syncStatus();
@@ -245,6 +255,27 @@ function abilityReadiness(player, action, cost) {
   return player.energy < cost ? 'need energy' : 'ready';
 }
 
+// Armed HUD line: the weapon's short name, hits left (a lantern's fuse instead; a mill stone,
+// which never swings, shows neither), and how it is thrown: a mill stone or a lit lantern goes
+// with J too, since neither swings.
+const shortName = kind => (WEAPON_SPECS[kind]?.short || kind).toUpperCase();
+const hitsLabel = hits => `${hits} ${hits === 1 ? 'HIT' : 'HITS'}`;
+function weaponLabel(p) {
+  const spec = WEAPON_SPECS[p.weapon];
+  const wear = p.weaponFuse != null ? `FUSE ${Math.max(0, Math.ceil(p.weaponFuse))} S` : spec?.melee === false ? '' : hitsLabel(p.weaponHits);
+  return [shortName(p.weapon), wear, `${spec?.melee === false ? 'J / U THROW' : 'U THROW'} / E DROP`].filter(Boolean).join(' · ');
+}
+const armorLabel = p => (p.armorItem ? ` · ${shortName(p.armorItem)} ${hitsLabel(p.armorHits)}` : '');
+// A consumable in use (its name from src/pickup-art.js CONSUMABLES) and the timed buffs running.
+const USE_VERBS = { drink: 'DRINKING', jar: 'DRINKING', eat: 'EATING', pill: 'TAKING', plant: 'PLANTING', absorb: 'ABSORBING' };
+function useLabel(p) {
+  const c = p.consume, spec = CONSUMABLES[c.kind];
+  const name = c.kind === 'orb' ? `${ELEMENTS[c.variant]?.name || ''} spirit orb`.trim() : spec?.name || c.kind;
+  return `${USE_VERBS[spec?.use] || 'USING'} ${name.toUpperCase()} · A HIT KNOCKS IT AWAY`;
+}
+const buffLabel = p => [p.power > 0 && `ELIXIR ${Math.ceil(p.power)} S`, p.qiFlow > 0 && `QI FLOW ${Math.ceil(p.qiFlow)} S`,
+  p.censerRegen > 0 && 'CENSER FIELD', p.sealed > 0 && `SEALED ${Math.ceil(p.sealed)} S · NO K / L`].filter(Boolean).map(text => ` · ${text}`).join('');
+
 function updateHud() {
   const s = game.state;
   const p = s.player;
@@ -254,7 +285,9 @@ function updateHud() {
   const shotReadiness = abilityReadiness(p, 'special', element.specialCost);
   const burstReadiness = abilityReadiness(p, 'burst', element.burstCost);
   const hitStreak = s.combo >= 2 && s.comboTimer > 0 && s.status !== 'ready' ? s.combo : 0;
-  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, p.grabTarget, p.grabbedBy, Boolean(p.recoveryRoll), p.knockdown > 0, p.grounded, p.action?.launched, p.airChain, s.arena, s.objective, shotReadiness, burstReadiness, hitStreak].join('|');
+  const signature = [s.status, Math.ceil(p.hp), Math.floor(p.energy), s.lives, s.wave, s.score, p.weapon, p.weaponHits, Math.ceil(p.weaponFuse ?? 0), p.armorItem, p.armorHits, p.grabTarget, p.grabbedBy, Boolean(p.recoveryRoll), p.knockdown > 0, p.grounded, p.action?.launched, p.airChain, s.arena, s.objective, shotReadiness, burstReadiness, hitStreak,
+    p.consume?.kind, Math.ceil(p.power || 0), Math.ceil(p.qiFlow || 0), p.censerRegen > 0, Math.ceil(p.sealed || 0), Boolean(p.rescue),
+    (s.captives || []).some(c => !c.freed)].join('|');
   if (signature !== hudSignature) {
     hudSignature = signature;
     updateMeter('health', p.hp, p.maxHp);
@@ -268,7 +301,11 @@ function updateHud() {
     $('mode-label').textContent = `${MODES[mode].name.toUpperCase()} / ${DIFFICULTIES[s.settings.difficulty].name.toUpperCase()}${countLabel}`;
     const challengeGoal = Number.isInteger(s.settings.enemyCount) ? s.settings.enemyCount * 3 : 12;
     $('stage-label').textContent = s.status === 'ready' ? 'READY WHEN YOU ARE' : mode === 'training' ? 'PRACTICE YOUR FLOW' : mode === 'story' ? `STAGE ${s.wave} / 4` : mode === 'tournament' ? `GUARDIAN ${s.wave} / 3` : mode === 'challenge' ? `${s.kills} / ${challengeGoal} DEFEATED` : `WAVE ${String(s.wave).padStart(2, '0')}`;
-    $('objective-label').textContent = s.objective || MODES[mode].objective;
+    // A bound villager on the field takes over the objective line, shown under the stage while
+    // he waits (the line is otherwise hidden), until he is freed or lost.
+    const captive = (s.captives || []).some(c => !c.freed && !c.dead);
+    $('objective-label').textContent = captive ? 'Hold E beside the bound villager to free him' : s.objective || MODES[mode].objective;
+    $('objective-label').parentElement.classList.toggle('rescue', captive);
     const lives = mode === 'training' ? Infinity : Math.max(0, s.lives);
     $('lives-value').textContent = lives === Infinity ? '∞' : lives ? Array(lives).fill('●').join(' ') : '—';
     $('lives-value').setAttribute('aria-label', `${lives === Infinity ? 'Unlimited' : lives} lives`);
@@ -283,8 +320,10 @@ function updateHud() {
       : p.knockdown > 0 ? p.grounded ? 'DOWN · SHIFT + DIRECTION TO ROLL' : 'SHIFT + DIRECTION · ROLL ON LANDING'
       : p.action?.launched ? 'LAUNCH · SPACE + J TO FOLLOW'
       : !p.grounded && p.airChain > 0 ? `AIR ${p.airChain}/${COMBAT[p.element].aerial.length} · ${p.airChain < COMBAT[p.element].aerial.length ? 'TAP J LATE TO LINK' : 'LAND TO RESET'}`
-      : p.weapon ? `${p.weapon.toUpperCase()} · ${p.weaponHits} HITS · U THROW / E DROP`
-      : 'UNARMED · E GRAB / PICK UP / DRINK';
+      : p.rescue ? 'FREEING THE VILLAGER · KEEP HOLDING E'
+      : p.consume ? `${useLabel(p)}${buffLabel(p)}`
+      : p.weapon ? `${weaponLabel(p)}${armorLabel(p)}${buffLabel(p)}`
+      : `UNARMED${armorLabel(p)} · E GRAB / PICK UP / USE${buffLabel(p)}`;
   }
   const boss = s.enemies.find((enemy) => enemy.type === 'boss' && !enemy.dead && enemy.hp > 0);
   $('boss-hud').hidden = !boss || s.status === 'ready';
@@ -300,79 +339,6 @@ function updateHud() {
   }
 }
 
-function unlockAudio() {
-  if (!preferences.sound) return;
-  try {
-    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
-  } catch {
-    // Audio is optional, including on browsers without Web Audio support.
-  }
-}
-
-function tone(from, to, length, volume = .02, type = 'sine') {
-  if (!preferences.sound || !audioContext || audioContext.state !== 'running') return;
-  const oscillator = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-  const time = audioContext.currentTime;
-  oscillator.type = type;
-  oscillator.frequency.setValueAtTime(from, time);
-  oscillator.frequency.exponentialRampToValueAtTime(Math.max(to, 30), time + length);
-  gain.gain.setValueAtTime(volume, time);
-  gain.gain.exponentialRampToValueAtTime(.0001, time + length);
-  oscillator.connect(gain);
-  gain.connect(audioContext.destination);
-  oscillator.start(time);
-  oscillator.stop(time + length);
-  oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
-}
-
-function impactSound(impact) {
-  const strength = Math.max(.6, Math.min(1.5, Number.isFinite(impact.strength) ? impact.strength : 1));
-  if (impact.kind === 'parry') {
-    tone(1350, 1900, .12, .03, 'sine');
-    tone(2100, 2600, .18, .012, 'sine');
-  } else if (impact.kind === 'block') {
-    tone(340, 100, .07, .025 * strength, 'triangle');
-  } else if (impact.kind === 'land') {
-    tone(95, 34, .13, (impact.heavy ? .035 : .018) * strength, 'sine');
-  } else if (impact.heavy) {
-    tone(95, 32, .18, .045 * strength, 'sine');
-    tone(230, 65, .09, .022 * strength, 'triangle');
-  } else {
-    const pitch = { air: 340, water: 220, earth: 150, fire: 270 }[impact.element] || 240;
-    tone(pitch, 65, .075, .035 * strength, 'triangle');
-  }
-}
-
-function pickImpact(state, afterId) {
-  const priority = (impact) => impact.kind === 'parry' ? 5 : impact.kind === 'hit' && impact.heavy ? 4 : impact.kind === 'land' ? 3 : impact.kind === 'block' ? 1 : 2;
-  let chosen = null;
-  const events = Array.isArray(state.impacts) ? state.impacts : [];
-  for (const event of [...events, state.lastImpact]) {
-    if (!event || event.id <= (afterId ?? 0)) continue;
-    if (!chosen || priority(event) > priority(chosen) || (priority(event) === priority(chosen) && event.id > chosen.id)) chosen = event;
-  }
-  return chosen;
-}
-
-function updateAudio() {
-  const s = game.state;
-  if (!s.player) return;
-  const impactId = Math.max(s.lastImpact?.id ?? 0, s.impacts?.at(-1)?.id ?? 0);
-  const current = { hp: s.player.hp, lives: s.lives, kills: s.kills, energy: s.player.energy, wave: s.wave, impactId };
-  if (audioSnapshot && ['playing', 'won', 'lost'].includes(s.status)) {
-    const impact = pickImpact(s, audioSnapshot.impactId);
-    if (impact) impactSound(impact);
-    if (current.lives < audioSnapshot.lives) tone(160, 40, .25, .04, 'triangle');
-    else if (!impact && current.hp < audioSnapshot.hp) tone(130, 45, .12, .035, 'triangle');
-    else if (!impact && current.kills > audioSnapshot.kills) tone(460, 800, .12, .025);
-    else if (!impact && current.energy < audioSnapshot.energy - 5) tone(280, 700, .16, .02, 'triangle');
-    if (current.wave > audioSnapshot.wave) tone(420, 630, .25, .02);
-  }
-  audioSnapshot = current;
-}
-
 function animate(timestamp) {
   const elapsed = lastTime ? Math.min((timestamp - lastTime) / 1000, .05) : 0;
   lastTime = timestamp;
@@ -384,10 +350,14 @@ function animate(timestamp) {
       if (game.state.player.inputRevision !== revision) keyboard.clearCommand();
       accumulator -= STEP;
     }
-  } else accumulator = 0;
+  } else {
+    accumulator = 0;
+    game.settleVisuals(elapsed);
+  }
   if (game.state.status !== lastStatus) syncStatus();
   updateHud();
-  updateAudio();
+  // Plays the cues the ticks above recorded and steers the music loops.
+  audio.update(game.state);
   renderer.draw(game.state, { reducedMotion: preferences.reducedMotion });
   requestAnimationFrame(animate);
 }
@@ -395,6 +365,7 @@ function animate(timestamp) {
 for (const button of document.querySelectorAll('[data-element]')) {
   button.addEventListener('click', () => {
     if (game.state.status !== 'ready') return;
+    audio.ui('menuMove', { step: Object.keys(ELEMENTS).indexOf(button.dataset.element) });
     preferences.element = button.dataset.element;
     createPreview();
     saveStorage();
@@ -403,21 +374,43 @@ for (const button of document.querySelectorAll('[data-element]')) {
 for (const name of ['mode', 'arena', 'difficulty', 'enemyCount']) {
   $(name + '-select').addEventListener('change', (event) => {
     if (game.state.status !== 'ready') return;
+    audio.ui('menuMove', { step: event.target.selectedIndex });
     preferences[name] = name === 'enemyCount' && event.target.value !== 'auto' ? Number(event.target.value) : event.target.value;
     createPreview();
     saveStorage();
   });
 }
-$('sound-button').addEventListener('click', () => { preferences.sound = !preferences.sound; unlockAudio(); updatePreferences(); saveStorage(); if (preferences.sound) tone(420, 680, .12); });
-$('motion-button').addEventListener('click', () => { preferences.reducedMotion = !preferences.reducedMotion; updatePreferences(); saveStorage(); });
+// A header toggle clicked mid-run hands the keys straight back to the fight; otherwise the focused
+// button would swallow every game key (and Space would press it again).
+function returnToFight() {
+  if (game.state.status === 'playing') canvas.focus({ preventScroll: true });
+}
+$('sound-button').addEventListener('click', () => {
+  preferences.sound = !preferences.sound;
+  audio.setEnabled(preferences.sound);
+  updatePreferences();
+  saveStorage();
+  audio.ui('menuOk');
+  returnToFight();
+});
+$('music-button').addEventListener('click', () => { preferences.music = !preferences.music; audio.setMusic(preferences.music); updatePreferences(); saveStorage(); returnToFight(); });
+$('volume-slider').addEventListener('input', event => {
+  preferences.volume = Math.min(1, Math.max(0, Number(event.target.value) / 100));
+  audio.setVolume(preferences.volume);
+  updatePreferences();
+  saveStorage();
+});
+$('volume-slider').addEventListener('change', () => { audio.ui('menuMove', { step: Math.round(preferences.volume * 4) }); returnToFight(); });
+$('motion-button').addEventListener('click', () => { preferences.reducedMotion = !preferences.reducedMotion; updatePreferences(); saveStorage(); returnToFight(); });
 $('pause-sound-button').addEventListener('click', () => $('sound-button').click());
+$('pause-music-button').addEventListener('click', () => $('music-button').click());
 $('pause-motion-button').addEventListener('click', () => $('motion-button').click());
 $('start-button').addEventListener('click', startRun);
 $('intro-start-button').addEventListener('click', startRun);
 $('pause-button').addEventListener('click', () => game.state.status === 'paused' ? resumeGame() : pauseGame());
 $('resume-button').addEventListener('click', resumeGame);
 $('retry-button').addEventListener('click', retry);
-$('menu-button').addEventListener('click', () => { recordRun(true); createPreview(); document.querySelector(`[data-element="${preferences.element}"]`).focus(); });
+$('menu-button').addEventListener('click', () => { audio.ui('menuCancel'); recordRun(true); createPreview(); document.querySelector(`[data-element="${preferences.element}"]`).focus(); });
 
 window.addEventListener('keydown', (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
